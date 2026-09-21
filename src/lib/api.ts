@@ -582,7 +582,7 @@ export const api = {
     const res = await fetch(`/api/connectivity/deriv/auth-url${query}`);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      throw new Error(err.message || 'Failed to generate Deriv OAuth URL');
+      throw new Error(err.details || err.error || err.message || 'Failed to generate Deriv OAuth URL');
     }
     return await res.json();
   },

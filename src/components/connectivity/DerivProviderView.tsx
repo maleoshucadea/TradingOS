@@ -45,11 +45,14 @@ export const DerivProviderView: React.FC<DerivProviderViewProps> = ({
   const [liveTick, setLiveTick] = useState<DerivLiveTick | null>(null);
   const [browserWsStatus, setBrowserWsStatus] = useState<string>('DISCONNECTED');
   const [showTokenModal, setShowTokenModal] = useState(false);
+  const [showSetupGuidance, setShowSetupGuidance] = useState(false);
   const [manualToken, setManualToken] = useState('');
   const [customAppId, setCustomAppId] = useState(provider.config.appId || '1089');
   const [isSubmittingToken, setIsSubmittingToken] = useState(false);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [priceFlash, setPriceFlash] = useState<'up' | 'down' | null>(null);
+  const [oauthError, setOauthError] = useState<string | null>(null);
+  const [copiedUri, setCopiedUri] = useState(false);
 
   // Sync account when provider updates
   useEffect(() => {
@@ -58,13 +61,42 @@ export const DerivProviderView: React.FC<DerivProviderViewProps> = ({
     }
   }, [provider.account]);
 
+  // Handle URL query parameters on return from OAuth (e.g. mobile Safari same-tab redirects)
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams(window.location.search);
+    const oauthSuccess = params.get('oauth_success');
+    const oauthErr = params.get('oauth_error');
+
+    if (oauthSuccess) {
+      setOauthError(null);
+      onNotify('Deriv DEMO account connected successfully!');
+      onRefresh();
+      fetchPositions();
+      // Clean query parameters from URL without reloading page
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    } else if (oauthErr) {
+      const decodedErr = decodeURIComponent(oauthErr);
+      setOauthError(decodedErr);
+      onNotify(`Deriv OAuth notice: ${decodedErr}`);
+      const cleanUrl = window.location.pathname;
+      window.history.replaceState({}, document.title, cleanUrl);
+    }
+  }, []);
+
   // Listen for OAuth postMessage callbacks from popup
   useEffect(() => {
     const handleAuthMessage = async (event: MessageEvent) => {
       if (event.data && event.data.type === 'DERIV_AUTH_SUCCESS') {
+        setOauthError(null);
         onNotify('Deriv DEMO account authenticated successfully!');
         await onRefresh();
         fetchPositions();
+      } else if (event.data && event.data.type === 'DERIV_AUTH_ERROR') {
+        const errorMsg = event.data.error || 'Authentication failed';
+        setOauthError(errorMsg);
+        onNotify(`Deriv OAuth failed: ${errorMsg}`);
       }
     };
     window.addEventListener('message', handleAuthMessage);
@@ -134,9 +166,21 @@ export const DerivProviderView: React.FC<DerivProviderViewProps> = ({
   };
 
   const handleConnectOAuth = async () => {
+    setOauthError(null);
     try {
       onNotify('Initiating Deriv OAuth 2.0 PKCE flow...');
-      const { authUrl } = await api.getDerivAuthUrl();
+      const clientRedirectUri = typeof window !== 'undefined'
+        ? `${window.location.origin}/auth/deriv/callback`
+        : undefined;
+
+      const { authUrl } = await api.getDerivAuthUrl(clientRedirectUri);
+
+      // On mobile (e.g. iPhone Safari), directly navigate to prevent popup blocking
+      const isMobile = typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+      if (isMobile) {
+        window.location.href = authUrl;
+        return;
+      }
 
       // Open Deriv official authorization window directly
       const width = 560;
@@ -151,11 +195,13 @@ export const DerivProviderView: React.FC<DerivProviderViewProps> = ({
       );
 
       if (!popup || popup.closed || typeof popup.closed === 'undefined') {
-        // If popup was blocked by iPhone Safari, redirect directly or open modal
+        // If popup was blocked by browser, redirect directly
         window.location.href = authUrl;
       }
     } catch (err: any) {
-      onNotify(`Failed to start OAuth: ${err.message}`);
+      const msg = err.message || 'Failed to start OAuth flow';
+      setOauthError(msg);
+      onNotify(`OAuth Error: ${msg}`);
     }
   };
 

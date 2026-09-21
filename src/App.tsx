@@ -37,7 +37,32 @@ import {
 } from './data/initialData';
 
 export default function App() {
-  const [activeModule, setActiveModule] = useState<ActiveNavModule>('strategy-builder');
+  const [activeModule, setActiveModule] = useState<ActiveNavModule>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const mod = params.get('module') as ActiveNavModule;
+      const validModules: ActiveNavModule[] = [
+        'dashboard',
+        'strategy-builder',
+        'markets',
+        'fundamentals',
+        'technical-analysis',
+        'risk-management',
+        'trades',
+        'journal',
+        'analytics',
+        'settings',
+        'connectivity',
+      ];
+      if (mod && validModules.includes(mod)) {
+        return mod;
+      }
+      if (window.location.pathname.includes('/broker') || window.location.pathname.includes('/connectivity') || params.has('oauth_success') || params.has('oauth_error')) {
+        return 'connectivity';
+      }
+    }
+    return 'strategy-builder';
+  });
   const [mode, setMode] = useState<AppMode>('ANALYSIS');
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
 

@@ -592,20 +592,15 @@ app.get('/api/connectivity/deriv/auth-url', (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Deriv provider not found' });
     }
 
-    const host = req.get('host') || 'localhost:3000';
-    const proto = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
-    const baseUrl = process.env.APP_URL || `${proto}://${host}`;
-    const defaultRedirect = `${baseUrl.replace(/\/$/, '')}/auth/deriv/callback`;
-    const redirectUri = (req.query.redirectUri as string) || process.env.DERIV_OAUTH_REDIRECT_URI || defaultRedirect;
-
-    const auth = deriv.initiateOAuth(redirectUri);
+    const requestedRedirect = (req.query.redirectUri as string) || undefined;
+    const auth = deriv.initiateOAuth(requestedRedirect);
     res.json({
       authUrl: auth.authUrl,
       state: auth.state,
-      redirectUri,
+      redirectUri: auth.redirectUri,
     });
   } catch (err: any) {
-    res.status(500).json({ error: 'Failed to initiate Deriv OAuth flow', details: err.message });
+    res.status(400).json({ error: 'Failed to initiate Deriv OAuth flow', details: err.message });
   }
 });
 
@@ -677,7 +672,7 @@ app.get('/auth/deriv/callback', (req: Request, res: Response) => {
       border: 1px solid #1c2b36;
       border-radius: 12px;
       padding: 28px 24px;
-      max-width: 420px;
+      max-width: 440px;
       width: 100%;
       box-shadow: 0 8px 30px rgba(0,0,0,0.5);
     }
@@ -703,7 +698,7 @@ app.get('/auth/deriv/callback', (req: Request, res: Response) => {
       margin: 16px auto;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .status { font-size: 13px; color: #94a3b8; line-height: 1.5; margin-top: 12px; }
+    .status { font-size: 13px; color: #94a3b8; line-height: 1.5; margin-top: 12px; word-break: break-word; }
     .error { color: #f87171; }
     .btn {
       display: inline-block;
@@ -717,6 +712,12 @@ app.get('/auth/deriv/callback', (req: Request, res: Response) => {
       font-size: 12px;
       border: none;
       cursor: pointer;
+    }
+    .btn-secondary {
+      background: #1e293b;
+      color: #e2e8f0;
+      border: 1px solid #334155;
+      margin-left: 8px;
     }
   </style>
 </head>
@@ -738,6 +739,7 @@ app.get('/auth/deriv/callback', (req: Request, res: Response) => {
       const code = urlParams.get('code') || hashParams.get('code');
       const state = urlParams.get('state') || hashParams.get('state');
       const error = urlParams.get('error') || hashParams.get('error');
+      const errorDesc = urlParams.get('error_description') || hashParams.get('error_description');
 
       const titleEl = document.getElementById('title');
       const statusEl = document.getElementById('status');
@@ -748,8 +750,17 @@ app.get('/auth/deriv/callback', (req: Request, res: Response) => {
         spinnerEl.style.display = 'none';
         titleEl.textContent = 'Authentication Declined';
         titleEl.classList.add('error');
-        statusEl.textContent = 'Deriv returned an authorization error: ' + error;
-        actionArea.innerHTML = '<button class="btn" onclick="window.close()">Close Window</button>';
+        const displayErr = error + (errorDesc ? ': ' + errorDesc : '');
+        statusEl.textContent = 'Deriv returned an authorization error: ' + displayErr;
+        
+        if (window.opener && !window.opener.closed) {
+          try {
+            window.opener.postMessage({ type: 'DERIV_AUTH_ERROR', error: displayErr }, '*');
+          } catch(e) {}
+        }
+        
+        const encodedErr = encodeURIComponent(displayErr);
+        actionArea.innerHTML = '<a class="btn" href="/?module=connectivity&oauth_error=' + encodedErr + '">Return to TradingOS</a>';
         return;
       }
 
@@ -791,8 +802,8 @@ app.get('/auth/deriv/callback', (req: Request, res: Response) => {
             window.opener.postMessage({ type: 'DERIV_AUTH_SUCCESS', timestamp: Date.now() }, '*');
             setTimeout(() => { window.close(); }, 1200);
           } else {
-            actionArea.innerHTML = '<a class="btn" href="/broker">Return to TradingOS</a>';
-            setTimeout(() => { window.location.href = '/broker'; }, 1500);
+            actionArea.innerHTML = '<a class="btn" href="/?module=connectivity&oauth_success=1">Return to TradingOS</a>';
+            setTimeout(() => { window.location.href = '/?module=connectivity&oauth_success=1'; }, 1500);
           }
         }
       } catch (err) {
@@ -800,7 +811,15 @@ app.get('/auth/deriv/callback', (req: Request, res: Response) => {
         titleEl.textContent = 'Connection Error';
         titleEl.classList.add('error');
         statusEl.textContent = err.message || 'Failed to complete Deriv connection.';
-        actionArea.innerHTML = '<button class="btn" onclick="window.close()">Close</button>';
+
+        if (window.opener && !window.opener.closed) {
+          try {
+            window.opener.postMessage({ type: 'DERIV_AUTH_ERROR', error: err.message }, '*');
+          } catch(e) {}
+        }
+
+        const encodedErr = encodeURIComponent(err.message || 'Connection failed');
+        actionArea.innerHTML = '<a class="btn" href="/?module=connectivity&oauth_error=' + encodedErr + '">Return to TradingOS</a>';
       }
     })();
   </script>

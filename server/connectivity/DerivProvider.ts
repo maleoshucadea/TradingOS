@@ -37,6 +37,7 @@ export class DerivProvider implements ITradingOSProvider {
   };
 
   private appId: string;
+  private clientId: string;
   private apiToken: string | null = null;
   private currentAccount: NormalizedAccount | null = null;
   private pkceSessions: Map<string, PKCESession> = new Map();
@@ -47,10 +48,41 @@ export class DerivProvider implements ITradingOSProvider {
 
   constructor() {
     this.appId = process.env.DERIV_APP_ID || '1089';
+    this.clientId = process.env.DERIV_CLIENT_ID || '';
     if (process.env.DERIV_API_TOKEN) {
       this.apiToken = process.env.DERIV_API_TOKEN;
       this.statusMessage = 'Deriv API Token detected from environment. Ready for connection test.';
     }
+  }
+
+  public getClientId(): string {
+    return this.clientId;
+  }
+
+  public getAppId(): string {
+    return this.appId;
+  }
+
+  /**
+   * Resolves the exact redirect URI to use for both authorization and token exchange.
+   * Priority:
+   * 1. Explicit DERIV_OAUTH_REDIRECT_URI from environment
+   * 2. Custom requested redirect URI if provided
+   * 3. APP_URL/auth/deriv/callback from Cloud Run deployment
+   * 4. Deployed default callback URL
+   */
+  public getEffectiveRedirectUri(customRedirectUri?: string): string {
+    if (process.env.DERIV_OAUTH_REDIRECT_URI && process.env.DERIV_OAUTH_REDIRECT_URI.trim()) {
+      return process.env.DERIV_OAUTH_REDIRECT_URI.trim();
+    }
+    if (customRedirectUri && customRedirectUri.trim()) {
+      return customRedirectUri.trim();
+    }
+    const appUrl = process.env.APP_URL;
+    if (appUrl && appUrl.trim()) {
+      return `${appUrl.trim().replace(/\/$/, '')}/auth/deriv/callback`;
+    }
+    return 'https://ais-dev-hywevvzlyhk6yukcnxt3ce-914291647670.europe-west2.run.app/auth/deriv/callback';
   }
 
   // --- PKCE & OAUTH 2.0 HELPERS ---
@@ -82,13 +114,22 @@ export class DerivProvider implements ITradingOSProvider {
   }
 
   /**
-   * Initiates Deriv OAuth 2.0 PKCE flow.
-   * Constructs authorization URL pointing to Deriv's official OAuth endpoint with S256 challenge.
+   * Initiates Deriv OAuth 2.0 Authorization Code + PKCE flow.
+   * Constructs authorization URL pointing to Deriv's current endpoint (https://auth.deriv.com/oauth2/auth)
+   * with client_id, response_type=code, code_challenge, code_challenge_method=S256, and state.
    */
-  public initiateOAuth(redirectUri: string): { authUrl: string; state: string } {
+  public initiateOAuth(customRedirectUri?: string): { authUrl: string; state: string; redirectUri: string } {
     this.cleanExpiredSessions();
 
-    const state = crypto.randomBytes(20).toString('hex');
+    if (!this.clientId || !this.clientId.trim()) {
+      throw new Error(
+        'MISSING_OAUTH_CONFIG: DERIV_CLIENT_ID environment variable is not configured. ' +
+        'Please register your OAuth 2.0 app on Deriv (https://developers.deriv.com) and set DERIV_CLIENT_ID.'
+      );
+    }
+
+    const redirectUri = this.getEffectiveRedirectUri(customRedirectUri);
+    const state = crypto.randomBytes(24).toString('hex');
     const verifier = this.generateCodeVerifier();
     const challenge = this.generateCodeChallenge(verifier);
 
@@ -98,28 +139,32 @@ export class DerivProvider implements ITradingOSProvider {
       createdAt: Date.now(),
     });
 
-    // Request minimum read-only scope for this milestone ('read')
+    const scope = process.env.DERIV_OAUTH_SCOPE || 'read';
+
+    // Current Deriv OAuth 2.0 Authorization Code + PKCE parameters
     const params = new URLSearchParams({
-      app_id: this.appId,
-      redirect_uri: redirectUri,
       response_type: 'code',
+      client_id: this.clientId.trim(),
+      redirect_uri: redirectUri,
+      scope,
+      state,
       code_challenge: challenge,
       code_challenge_method: 'S256',
-      state,
-      scope: 'read',
-      brand: 'deriv',
     });
 
-    const authUrl = `https://oauth.deriv.com/oauth2/authorize?${params.toString()}`;
-    return { authUrl, state };
+    const authUrl = `https://auth.deriv.com/oauth2/auth?${params.toString()}`;
+    return { authUrl, state, redirectUri };
   }
 
   /**
-   * Exchanges an authorization code and code_verifier for an access token via Deriv's token endpoint.
+   * Exchanges an authorization code and code_verifier for an access token via Deriv's token endpoint (https://auth.deriv.com/oauth2/token).
+   * Validates state, performs server-side POST, verifies the account is DEMO, and marks CONNECTED only upon real API confirmation.
    */
   public async handleOAuthCallback(code: string, state: string, redirectUriOverride?: string): Promise<NormalizedAccount> {
     const session = this.pkceSessions.get(state);
     if (!session) {
+      this.connectionStatus = 'ERROR';
+      this.statusMessage = 'OAuth state mismatch or session expired. Please restart login.';
       throw new Error('INVALID_OAUTH_STATE: Authorization state mismatch or session expired. Please restart login.');
     }
 
@@ -127,13 +172,19 @@ export class DerivProvider implements ITradingOSProvider {
     const { codeVerifier, redirectUri } = session;
     this.pkceSessions.delete(state);
 
-    const targetRedirectUri = redirectUriOverride || session.redirectUri;
+    const targetRedirectUri = session.redirectUri;
+
+    if (!this.clientId || !this.clientId.trim()) {
+      this.connectionStatus = 'ERROR';
+      this.statusMessage = 'MISSING_OAUTH_CONFIG: DERIV_CLIENT_ID is not configured.';
+      throw new Error('MISSING_OAUTH_CONFIG: DERIV_CLIENT_ID is not configured.');
+    }
 
     // Server-side token exchange with Deriv
     const tokenEndpoint = 'https://auth.deriv.com/oauth2/token';
     const bodyParams = new URLSearchParams({
       grant_type: 'authorization_code',
-      client_id: this.appId,
+      client_id: this.clientId.trim(),
       code,
       code_verifier: codeVerifier,
       redirect_uri: targetRedirectUri,
@@ -152,8 +203,11 @@ export class DerivProvider implements ITradingOSProvider {
 
       tokenResponse = await resp.json().catch(() => ({}));
       if (!resp.ok || tokenResponse.error) {
-        const errorMsg = tokenResponse.error_description || tokenResponse.error || `HTTP ${resp.status}`;
-        throw new Error(`Token exchange rejected by Deriv: ${errorMsg}`);
+        const errCode = tokenResponse.error || `HTTP_${resp.status}`;
+        const errDesc = tokenResponse.error_description || tokenResponse.message || `HTTP ${resp.status}`;
+        this.connectionStatus = 'ERROR';
+        this.statusMessage = `Deriv token exchange failed (${errCode}): ${errDesc}`;
+        throw new Error(`TOKEN_EXCHANGE_FAILED: ${errCode} - ${errDesc}`);
       }
     } catch (err: any) {
       this.connectionStatus = 'ERROR';
@@ -163,7 +217,9 @@ export class DerivProvider implements ITradingOSProvider {
 
     const accessToken = tokenResponse.access_token || tokenResponse.token;
     if (!accessToken) {
-      throw new Error('Deriv token response did not include a valid access token.');
+      this.connectionStatus = 'ERROR';
+      this.statusMessage = 'Deriv token response did not include a valid access token.';
+      throw new Error('TOKEN_EXCHANGE_FAILED: Deriv token response did not include a valid access token.');
     }
 
     this.apiToken = accessToken;
@@ -171,7 +227,7 @@ export class DerivProvider implements ITradingOSProvider {
   }
 
   /**
-   * Handles direct token authentication (e.g. from Deriv OAuth token redirect or direct Demo API token).
+   * Handles direct token authentication (e.g. direct Demo API token from Account Settings).
    */
   public async handleDirectToken(token: string, explicitLoginId?: string): Promise<NormalizedAccount> {
     if (!token || token.trim().length === 0) {
@@ -182,7 +238,8 @@ export class DerivProvider implements ITradingOSProvider {
   }
 
   /**
-   * Verifies the token with Deriv, extracts account telemetry, and enforces DEMO verification.
+   * Verifies the token with Deriv WebSocket API, extracts account telemetry, and strictly enforces DEMO verification.
+   * Under NO circumstances fabricates fake accounts or balances.
    */
   private async authenticateAndVerifyAccount(token: string, explicitLoginId?: string): Promise<NormalizedAccount> {
     this.connectionStatus = 'CONNECTING';
@@ -209,24 +266,27 @@ export class DerivProvider implements ITradingOSProvider {
         };
       }>({ authorize: token }, 7000);
 
-      const authData = authResult.authorize;
+      const authData = authResult?.authorize;
       if (!authData || !authData.loginid) {
-        throw new Error('Invalid authorization response from Deriv API.');
+        this.currentAccount = null;
+        this.connectionStatus = 'ERROR';
+        this.statusMessage = 'Invalid authorization response from Deriv API.';
+        throw new Error('INVALID_AUTH_RESPONSE: Could not retrieve account details from Deriv.');
       }
 
       // Check account type: Demo accounts have is_virtual === 1 or loginid starting with 'VRT'
       const isDemo = authData.is_virtual === 1 || authData.loginid.toUpperCase().startsWith('VRT');
-      const accountEnv: 'DEMO' | 'REAL' = isDemo ? 'DEMO' : 'REAL';
 
-      // MILESTONE 2A MANDATE: Ensure connected account is DEMO
+      // MILESTONE 2A MANDATE: Ensure connected account is strictly DEMO.
+      // If the authenticated account is REAL, reject the connection for Milestone 2A and do NOT mark it CONNECTED.
       if (!isDemo) {
-        // If the user's primary token was Real, check if they have a Demo account in their account_list
+        this.currentAccount = null;
+        this.connectionStatus = 'ERROR';
         const demoAcct = authData.account_list?.find((a) => a.is_virtual === 1 || a.loginid.toUpperCase().startsWith('VRT'));
-        if (demoAcct) {
-          this.statusMessage = `Real account (${authData.loginid}) detected, but Milestone 2A strictly enforces DERIV DEMO. Please use the token for Demo account ${demoAcct.loginid}.`;
-        } else {
-          this.statusMessage = `Account ${authData.loginid} is a REAL account. Milestone 2A requires a Deriv DEMO account.`;
-        }
+        const hint = demoAcct ? ` Demo account ${demoAcct.loginid} is available in your Deriv profile.` : '';
+        const errMsg = `REAL_ACCOUNT_REJECTED: Account ${authData.loginid} is a Real money account. TradingOS Milestone 2A strictly requires a Deriv DEMO account.${hint}`;
+        this.statusMessage = errMsg;
+        throw new Error(errMsg);
       }
 
       const maskedLogin = authData.loginid.length > 4
@@ -238,9 +298,9 @@ export class DerivProvider implements ITradingOSProvider {
         providerId: this.id,
         providerType: this.type,
         broker: 'Deriv (SVG) LLC',
-        server: isDemo ? 'Deriv-Demo-Virtual' : 'Deriv-Live-Server',
+        server: 'Deriv-Demo-Virtual',
         loginMasked: maskedLogin,
-        accountName: authData.fullname || (isDemo ? 'Deriv Demo Virtual Account' : 'Deriv Live Account'),
+        accountName: authData.fullname || 'Deriv Demo Virtual Account',
         currency: authData.currency || 'USD',
         balance: Number(authData.balance || 0),
         equity: Number(authData.balance || 0),
@@ -250,54 +310,21 @@ export class DerivProvider implements ITradingOSProvider {
         leverage: 100,
         tradeAllowed: false, // Strictly false in read-only milestone
         updatedAt: new Date().toISOString(),
-        dataSourceType: isDemo ? 'DEMO_TERMINAL' : 'REAL_TERMINAL',
-        accountEnvironment: accountEnv,
+        dataSourceType: 'DEMO_TERMINAL',
+        accountEnvironment: 'DEMO',
       };
 
       this.currentAccount = normalizedAccount;
       this.connectionStatus = 'CONNECTED';
-      this.statusMessage = isDemo
-        ? `Connected to DERIV DEMO account (${maskedLogin}). Read-only mode active.`
-        : `Connected to DERIV account (${maskedLogin}) [WARNING: Real account detected; execution disabled].`;
+      this.statusMessage = `Connected to DERIV DEMO account (${maskedLogin}). Read-only mode active.`;
       this.lastChecked = new Date().toISOString();
 
       return normalizedAccount;
     } catch (err: any) {
-      // If server-side WebSocket couldn't connect (e.g. Cloudflare edge rejection on container IP),
-      // we check if a Demo token was supplied and build an honest unconfirmed or verified state
-      if (token && (token.startsWith('a1-') || token.length >= 10)) {
-        const fallbackLogin = explicitLoginId || 'VRTC-DEMO';
-        const isDemo = fallbackLogin.toUpperCase().startsWith('VRT');
-        const masked = fallbackLogin.length > 4 ? `${fallbackLogin.substring(0, 3)}****${fallbackLogin.slice(-2)}` : fallbackLogin;
-
-        // If local simulation or client browser direct sync
-        const provisionalAccount: NormalizedAccount = {
-          id: `deriv-${fallbackLogin}`,
-          providerId: this.id,
-          providerType: this.type,
-          broker: 'Deriv (SVG) LLC',
-          server: 'Deriv-Demo-Virtual',
-          loginMasked: masked,
-          accountName: 'Deriv Demo Account (Client-Synchronized)',
-          currency: 'USD',
-          balance: 10000.0,
-          equity: 10000.0,
-          margin: 0,
-          freeMargin: 10000.0,
-          marginLevel: null,
-          leverage: 100,
-          tradeAllowed: false,
-          updatedAt: new Date().toISOString(),
-          dataSourceType: 'DEMO_TERMINAL',
-          accountEnvironment: 'DEMO',
-        };
-
-        this.currentAccount = provisionalAccount;
-        this.connectionStatus = 'CONNECTED';
-        this.statusMessage = `Connected to DERIV DEMO (${masked}). Browser direct telemetry active.`;
-        return provisionalAccount;
-      }
-
+      // SECURITY & ACCURACY: Under NO circumstances fabricate a fake account or balance!
+      // If Deriv cannot be reached or the account cannot be verified:
+      // connection must remain ERROR/DISCONNECTED, show clear error, do NOT fabricate data, do NOT say connected.
+      this.currentAccount = null;
       this.connectionStatus = 'ERROR';
       this.statusMessage = `Deriv authentication error: ${err.message}`;
       throw err;
@@ -385,6 +412,9 @@ export class DerivProvider implements ITradingOSProvider {
         tokenMasked: maskedToken,
         accountEnvironment: 'DEMO',
         readOnlyEnforced: true,
+        hasClientId: !!this.clientId && this.clientId.trim().length > 0,
+        clientIdMasked: this.clientId ? `${this.clientId.substring(0, 3)}***` : undefined,
+        redirectUri: this.getEffectiveRedirectUri(),
       },
     };
   }
@@ -421,13 +451,15 @@ export class DerivProvider implements ITradingOSProvider {
       });
     }
 
-    // Step 2: Application ID Registration & OAuth PKCE Readiness
-    const hasAppId = !!this.appId && this.appId.length > 0;
+    // Step 2: OAuth 2.0 PKCE Client ID & WebSocket App ID Configuration
+    const hasClientId = !!this.clientId && this.clientId.trim().length > 0;
     steps.push({
       id: 'deriv_app_id',
-      name: 'Registered Application ID (App ID)',
-      status: hasAppId ? 'PASS' : 'FAIL',
-      message: hasAppId ? `App ID configured (${this.appId}) with S256 PKCE support` : 'App ID missing',
+      name: 'OAuth 2.0 Client ID & WebSocket App ID Registration',
+      status: hasClientId ? 'PASS' : 'WARNING',
+      message: hasClientId
+        ? `OAuth 2.0 Client ID active (${this.clientId.substring(0, 3)}***) with S256 PKCE. WebSocket App ID: ${this.appId}`
+        : `DERIV_CLIENT_ID is not configured in environment. WebSocket App ID (${this.appId}) available for market data. Set DERIV_CLIENT_ID in Settings for OAuth login.`,
       timestamp: now,
     });
 
@@ -457,10 +489,10 @@ export class DerivProvider implements ITradingOSProvider {
       steps.push({
         id: 'deriv_env_check',
         name: 'Deriv Account Environment Verification',
-        status: isDemo ? 'PASS' : 'WARNING',
+        status: isDemo ? 'PASS' : 'FAIL',
         message: isDemo
           ? `Verified DERIV DEMO environment (${this.currentAccount.loginMasked}) - Balance: $${this.currentAccount.balance.toLocaleString('en-US', { minimumFractionDigits: 2 })} ${this.currentAccount.currency}`
-          : `REAL Account Detected (${this.currentAccount.loginMasked}). Milestone 2A mandates DEMO accounts.`,
+          : `REAL Account Detected (${this.currentAccount.loginMasked}). Milestone 2A mandates DEMO accounts only.`,
         timestamp: now,
       });
     } else {

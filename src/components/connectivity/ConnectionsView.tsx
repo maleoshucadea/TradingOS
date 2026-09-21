@@ -29,7 +29,15 @@ import { DerivProviderView } from './DerivProviderView';
 
 export const ConnectionsView: React.FC = () => {
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
-  const [selectedProviderId, setSelectedProviderId] = useState<string>('mt5-primary');
+  const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('oauth_success') || params.has('oauth_error') || params.get('provider') === 'deriv' || params.get('provider') === 'deriv-demo') {
+        return 'deriv-demo';
+      }
+    }
+    return 'mt5-primary';
+  });
   const [isLoading, setIsLoading] = useState(true);
 
   // MT5 state
