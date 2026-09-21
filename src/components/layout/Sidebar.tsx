@@ -11,6 +11,7 @@ import {
   PieChart,
   Settings,
   ChevronRight,
+  Cable,
 } from 'lucide-react';
 import { ActiveNavModule } from '../../types';
 
@@ -33,7 +34,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     section?: string;
   }[] = [
     { id: 'dashboard', label: 'Command Center', icon: LayoutDashboard, section: 'OVERVIEW' },
-    { id: 'markets', label: 'Markets & Assets', icon: TrendingUp },
+    { id: 'connectivity', label: 'Brokers & MT5', icon: Cable, section: 'CONNECTIVITY' },
+    { id: 'markets', label: 'Markets & Assets', icon: TrendingUp, section: 'MARKETS' },
     { id: 'strategy-builder', label: 'Strategy Builder', icon: Sliders, badge: strategyCount, section: 'RESEARCH & LOGIC' },
     { id: 'fundamentals', label: 'Fundamentals Engine', icon: Globe2 },
     { id: 'technical-analysis', label: 'Technical Analysis', icon: LineChart },

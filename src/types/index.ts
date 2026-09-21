@@ -297,6 +297,7 @@ export interface AnalyticsSummary {
 
 export type ActiveNavModule =
   | 'dashboard'
+  | 'connectivity'
   | 'markets'
   | 'strategy-builder'
   | 'fundamentals'
@@ -306,3 +307,5 @@ export type ActiveNavModule =
   | 'journal'
   | 'analytics'
   | 'settings';
+
+export * from './connectivity';

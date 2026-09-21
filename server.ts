@@ -14,6 +14,7 @@ import {
 } from './src/data/initialData';
 import { Strategy, GenericStrategyRule, TradeDecision, JournalEntry } from './src/types';
 import { evaluateStrategyRules, DEFAULT_EVALUATION_STATE } from './src/lib/ruleEvaluationEngine';
+import { providerManager } from './server/connectivity/ProviderManager';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -465,6 +466,141 @@ app.post('/api/journal', (req: Request, res: Response) => {
 // 11. Analytics
 app.get('/api/analytics', (req: Request, res: Response) => {
   res.json(analytics);
+});
+
+// 12. CONNECTIVITY & BROKER PROVIDER LAYER (Milestone 1: Proof of Connection)
+const UpdateProviderConfigSchema = z.object({
+  bridgeUrl: z.string().url('Must be a valid URL (e.g. http://127.0.0.1:8001)').optional(),
+  bridgeToken: z.string().optional(),
+  enabled: z.boolean().optional(),
+  isSandboxOverride: z.boolean().optional(),
+});
+
+// List all registered connectivity providers
+app.get('/api/connectivity/providers', async (req: Request, res: Response) => {
+  try {
+    const providers = await providerManager.getAllSummaries();
+    res.json(providers);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to retrieve providers', details: err.message });
+  }
+});
+
+// Get single provider status
+app.get('/api/connectivity/providers/:id/status', async (req: Request, res: Response) => {
+  try {
+    const provider = providerManager.getProvider(req.params.id);
+    if (!provider) {
+      return res.status(404).json({ error: 'Provider not found' });
+    }
+    const status = await provider.getStatus();
+    res.json(status);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Status check failed', details: err.message });
+  }
+});
+
+// Run full diagnostic connection probe
+app.post('/api/connectivity/providers/:id/test', async (req: Request, res: Response) => {
+  try {
+    const report = await providerManager.testProvider(req.params.id);
+    res.json(report);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Diagnostic test failed', details: err.message });
+  }
+});
+
+// Retrieve normalized account info
+app.get('/api/connectivity/providers/:id/account', async (req: Request, res: Response) => {
+  try {
+    const account = await providerManager.getAccount(req.params.id);
+    res.json(account);
+  } catch (err: any) {
+    res.status(502).json({
+      error: 'ACCOUNT_RETRIEVAL_FAILED',
+      message: err.message || 'Could not retrieve account information from provider',
+    });
+  }
+});
+
+// Retrieve available symbols
+app.get('/api/connectivity/providers/:id/symbols', async (req: Request, res: Response) => {
+  try {
+    const search = req.query.search as string | undefined;
+    const symbols = await providerManager.getSymbols(req.params.id, search);
+    res.json(symbols);
+  } catch (err: any) {
+    res.status(502).json({ error: 'SYMBOL_RETRIEVAL_FAILED', message: err.message });
+  }
+});
+
+// Retrieve real market quote
+app.get('/api/connectivity/providers/:id/quote', async (req: Request, res: Response) => {
+  try {
+    const symbol = (req.query.symbol as string) || 'EURUSD';
+    const quote = await providerManager.getQuote(req.params.id, symbol);
+    res.json(quote);
+  } catch (err: any) {
+    res.status(502).json({ error: 'QUOTE_RETRIEVAL_FAILED', message: err.message });
+  }
+});
+
+// Retrieve read-only open positions
+app.get('/api/connectivity/providers/:id/positions', async (req: Request, res: Response) => {
+  try {
+    const positions = await providerManager.getPositions(req.params.id);
+    res.json(positions);
+  } catch (err: any) {
+    res.status(502).json({ error: 'POSITIONS_RETRIEVAL_FAILED', message: err.message });
+  }
+});
+
+// Update provider configuration (bridge URL, token, sandbox mode)
+app.post('/api/connectivity/providers/:id/config', async (req: Request, res: Response) => {
+  const parseResult = UpdateProviderConfigSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({ error: 'Invalid configuration data', details: parseResult.error.flatten() });
+  }
+
+  try {
+    const updated = await providerManager.updateConfig(req.params.id, parseResult.data);
+    res.json(updated);
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to update configuration', details: err.message });
+  }
+});
+
+// Disconnect provider session
+app.post('/api/connectivity/providers/:id/disconnect', async (req: Request, res: Response) => {
+  try {
+    await providerManager.disconnect(req.params.id);
+    res.json({ success: true, message: `Provider ${req.params.id} disconnected` });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to disconnect provider', details: err.message });
+  }
+});
+
+// TradingView Webhook Ingress (Event & Signal Receiver)
+app.post('/api/connectivity/tradingview/webhook', (req: Request, res: Response) => {
+  const alertPayload = req.body;
+  console.log('[TradingView Ingress Alert Received]:', alertPayload);
+  res.json({
+    status: 'RECEIVED',
+    ingress: 'TradingView Webhook',
+    timestamp: new Date().toISOString(),
+    payloadSummary: alertPayload?.ticker || alertPayload?.action || 'Generic Alert',
+    readOnlyNotice: 'Alert logged. Live order execution is strictly disabled in Milestone 1.',
+  });
+});
+
+// STRICT SAFETY BOUNDARY: Hard-block any live order placement, trade execution, or position closure
+app.all(['/api/orders*', '/api/trades/execute*', '/api/positions/close*'], (req: Request, res: Response) => {
+  res.status(403).json({
+    error: 'EXECUTION_BLOCKED_READ_ONLY_MILESTONE',
+    message: 'TradingOS is currently in Milestone 1: Read-Only Connectivity Foundation. Live order execution and position modifications are physically prohibited.',
+    tradingAllowed: false,
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // Server Initialization with Vite Middleware

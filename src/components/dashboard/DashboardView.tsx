@@ -12,6 +12,7 @@ import {
   PieChart,
   Layers,
   ChevronRight,
+  Cable,
 } from 'lucide-react';
 import {
   Strategy,
@@ -58,7 +59,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <span className="text-gray-600">/</span>
           <span className="text-gray-400">STRUCTURED DECISION PIPELINE</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => onNavigate('connectivity')}
+            className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] bg-[#141e26] hover:bg-[#1c2934] text-[#c6f135] border border-[#c6f135]/30 font-semibold transition-colors"
+          >
+            <Cable className="w-3 h-3" />
+            <span>MT5 BROKER HUB</span>
+          </button>
           <span className="text-[10px] text-gray-500">DATA ORIGIN:</span>
           <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#00f5ff]/10 text-[#00f5ff] border border-[#00f5ff]/30">
             {mode === 'LIVE' ? 'LIVE DATA' : mode === 'BACKTEST' ? 'BACKTEST DATA' : 'DEMO DATA'}

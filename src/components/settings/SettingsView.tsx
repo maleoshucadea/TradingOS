@@ -1,12 +1,14 @@
 import React from 'react';
-import { Settings, Shield, Database, Smartphone, RotateCcw } from 'lucide-react';
+import { Settings, Shield, Database, Smartphone, RotateCcw, Cable, ChevronRight } from 'lucide-react';
 import { PWAInstallButton } from '../pwa/PWAInstallButton';
+import { ActiveNavModule } from '../../types';
 
 interface SettingsViewProps {
   onResetData: () => void;
+  onNavigate?: (module: ActiveNavModule) => void;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ onResetData }) => {
+export const SettingsView: React.FC<SettingsViewProps> = ({ onResetData, onNavigate }) => {
   return (
     <div className="space-y-4 pb-16 font-mono text-xs">
       <div className="p-3 bg-[#0d1216] rounded border border-[#1b252f] flex items-center justify-between">
@@ -17,8 +19,45 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onResetData }) => {
           </span>
         </div>
         <span className="text-[10px] px-2 py-0.5 rounded bg-[#162029] text-[#c6f135] border border-[#223342]">
-          STAGE: STRATEGY LANGUAGE ACTIVE
+          STAGE: CONNECTIVITY & STRATEGY ACTIVE
         </span>
+      </div>
+
+      {/* Broker & Terminal Connectivity Hub */}
+      <div className="p-3 bg-[#0d1216] rounded border border-[#1b252f] space-y-3">
+        <div className="text-xs font-bold text-white flex items-center justify-between border-b border-[#1b252f] pb-2">
+          <div className="flex items-center gap-2">
+            <Cable className="w-4 h-4 text-[#c6f135]" />
+            <span>BROKER & TERMINAL CONNECTIVITY</span>
+          </div>
+          <span className="text-[10px] text-[#c6f135] bg-[#c6f135]/10 px-2 py-0.5 rounded border border-[#c6f135]/20 font-semibold">
+            MILESTONE 1 (READ-ONLY)
+          </span>
+        </div>
+        <div className="space-y-2 text-gray-300">
+          <div className="flex items-center justify-between p-3 rounded bg-[#10161c] border border-[#17222c]">
+            <div>
+              <div className="font-bold text-white flex items-center gap-2">
+                <span>MetaTrader 5 Local Bridge</span>
+                <span className="text-[9px] px-1.5 py-0.2 rounded bg-[#14211a] text-[#c6f135] border border-[#c6f135]/30">
+                  Primary Connector
+                </span>
+              </div>
+              <div className="text-[10px] text-gray-400 mt-0.5">
+                Proof of connection, terminal health diagnostics, and market quote telemetry
+              </div>
+            </div>
+            {onNavigate && (
+              <button
+                onClick={() => onNavigate('connectivity')}
+                className="px-3 py-1.5 rounded bg-[#16212b] hover:bg-[#1f2d3a] text-white border border-[#283948] text-xs font-semibold transition-colors flex items-center gap-1.5"
+              >
+                <span>Manage Hub</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Safety & Execution Policy */}

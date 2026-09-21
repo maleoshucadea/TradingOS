@@ -12,6 +12,7 @@ import {
   BookOpen,
   PieChart,
   Settings,
+  Cable,
 } from 'lucide-react';
 import { ActiveNavModule } from '../../types';
 
@@ -41,6 +42,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
     description: string;
     icon: React.FC<{ className?: string }>;
   }[] = [
+    { id: 'connectivity', label: 'Brokers & MT5', description: 'MetaTrader 5 bridge, diagnostics & telemetry', icon: Cable },
     { id: 'fundamentals', label: 'Fundamentals', description: 'Macro, central banks, CPI & calendar news', icon: Globe2 },
     { id: 'technical-analysis', label: 'Technical Analysis', description: 'Indicators, market structure & frameworks', icon: LineChart },
     { id: 'trades', label: 'Trade Decisions', description: 'Condition-validated trade candidates', icon: CheckSquare },

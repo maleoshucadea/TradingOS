@@ -13,6 +13,7 @@ import { TradesView } from './components/trades/TradesView';
 import { JournalView } from './components/journal/JournalView';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { SettingsView } from './components/settings/SettingsView';
+import { ConnectionsView } from './components/connectivity/ConnectionsView';
 
 import {
   ActiveNavModule,
@@ -142,6 +143,8 @@ export default function App() {
             />
           )}
 
+          {activeModule === 'connectivity' && <ConnectionsView />}
+
           {activeModule === 'strategy-builder' && (
             <StrategyBuilderView
               strategies={strategies}
@@ -182,7 +185,10 @@ export default function App() {
           )}
 
           {activeModule === 'settings' && (
-            <SettingsView onResetData={handleResetData} />
+            <SettingsView
+              onResetData={handleResetData}
+              onNavigate={setActiveModule}
+            />
           )}
         </main>
       </div>

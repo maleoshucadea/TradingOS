@@ -8,6 +8,13 @@ import {
   JournalEntry,
   AnalyticsSummary,
   StrategyConfiguration,
+  ProviderSummary,
+  ConnectionDiagnosticsReport,
+  NormalizedAccount,
+  NormalizedSymbol,
+  NormalizedQuote,
+  NormalizedPosition,
+  ProviderConfig,
 } from '../types';
 import {
   INITIAL_STRATEGIES,
@@ -382,5 +389,191 @@ export const api = {
       if (res.ok) return await res.json();
     } catch {}
     return INITIAL_ANALYTICS;
+  },
+
+  // ==========================================
+  // CONNECTIVITY & BROKER PROVIDER METHODS
+  // ==========================================
+  async getProviders(): Promise<ProviderSummary[]> {
+    try {
+      const res = await fetch('/api/connectivity/providers');
+      if (res.ok) return await res.json();
+    } catch {}
+
+    // Fallback if backend temporarily restarting
+    return [
+      {
+        id: 'mt5-primary',
+        type: 'MT5',
+        name: 'MetaTrader 5 (Local Desktop)',
+        version: '1.0.0',
+        status: 'DISCONNECTED',
+        statusMessage: 'Local bridge agent waiting for connection on http://127.0.0.1:8001',
+        capabilities: {
+          readAccount: true,
+          readQuotes: true,
+          readCandles: true,
+          readPositions: true,
+          readOrders: true,
+          readHistory: true,
+          webhooks: false,
+          liveExecution: false,
+        },
+        config: {
+          bridgeUrl: 'http://127.0.0.1:8001',
+          hasToken: false,
+          isLocal: true,
+          readOnlyEnforced: true,
+        },
+      },
+      {
+        id: 'ctrader-primary',
+        type: 'CTRADER',
+        name: 'cTrader Open API (Architecture Ready)',
+        version: '1.0.0',
+        status: 'UNCONFIGURED',
+        statusMessage: 'cTrader Open API integration architecture ready.',
+        capabilities: {
+          readAccount: true,
+          readQuotes: true,
+          readCandles: true,
+          readPositions: true,
+          readOrders: true,
+          readHistory: true,
+          webhooks: true,
+          liveExecution: false,
+        },
+        config: {
+          readOnlyEnforced: true,
+        },
+      },
+      {
+        id: 'deriv-primary',
+        type: 'DERIV',
+        name: 'Deriv WebSocket API (Architecture Ready)',
+        version: '1.0.0',
+        status: 'UNCONFIGURED',
+        statusMessage: 'Deriv WebSocket integration architecture ready.',
+        capabilities: {
+          readAccount: true,
+          readQuotes: true,
+          readCandles: true,
+          readPositions: true,
+          readOrders: false,
+          readHistory: true,
+          webhooks: false,
+          liveExecution: false,
+        },
+        config: {
+          readOnlyEnforced: true,
+        },
+      },
+      {
+        id: 'tradingview-source',
+        type: 'TRADINGVIEW',
+        name: 'TradingView (Webhook Ingress & Signal Source)',
+        version: '1.0.0',
+        status: 'UNCONFIGURED',
+        statusMessage: 'TradingView webhook receiver endpoint ready.',
+        capabilities: {
+          readAccount: false,
+          readQuotes: true,
+          readCandles: false,
+          readPositions: false,
+          readOrders: false,
+          readHistory: false,
+          webhooks: true,
+          liveExecution: false,
+        },
+        config: {
+          readOnlyEnforced: true,
+        },
+      },
+    ];
+  },
+
+  async testProvider(providerId: string): Promise<ConnectionDiagnosticsReport> {
+    try {
+      const res = await fetch(`/api/connectivity/providers/${providerId}/test`, {
+        method: 'POST',
+      });
+      if (res.ok) return await res.json();
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `Diagnostic probe failed with status ${res.status}`);
+    } catch (err: any) {
+      return {
+        providerId,
+        providerType: 'MT5',
+        timestamp: new Date().toISOString(),
+        overallStatus: 'FAILED',
+        steps: [
+          {
+            id: 'backend_connection',
+            name: 'TradingOS API Route Active',
+            status: 'FAIL',
+            message: err.message || 'Could not communicate with backend',
+            timestamp: new Date().toISOString(),
+          },
+        ],
+        summary: 'Connection diagnostic probe failed.',
+        troubleshootingNotes: [
+          'Verify that the TradingOS server is running.',
+          'Start mt5-bridge/bridge.py locally.',
+        ],
+      };
+    }
+  },
+
+  async getProviderAccount(providerId: string): Promise<NormalizedAccount> {
+    const res = await fetch(`/api/connectivity/providers/${providerId}/account`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Account retrieval failed');
+    }
+    return await res.json();
+  },
+
+  async getProviderSymbols(providerId: string, search?: string): Promise<NormalizedSymbol[]> {
+    const query = search ? `?search=${encodeURIComponent(search)}` : '';
+    const res = await fetch(`/api/connectivity/providers/${providerId}/symbols${query}`);
+    if (!res.ok) return [];
+    return await res.json();
+  },
+
+  async getProviderQuote(providerId: string, symbol: string): Promise<NormalizedQuote> {
+    const res = await fetch(`/api/connectivity/providers/${providerId}/quote?symbol=${encodeURIComponent(symbol)}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || `Quote for ${symbol} unavailable`);
+    }
+    return await res.json();
+  },
+
+  async getProviderPositions(providerId: string): Promise<NormalizedPosition[]> {
+    const res = await fetch(`/api/connectivity/providers/${providerId}/positions`);
+    if (!res.ok) return [];
+    return await res.json();
+  },
+
+  async updateProviderConfig(
+    providerId: string,
+    config: Partial<ProviderConfig & { isSandboxOverride?: boolean }>
+  ): Promise<ProviderSummary> {
+    const res = await fetch(`/api/connectivity/providers/${providerId}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Config update failed');
+    }
+    return await res.json();
+  },
+
+  async disconnectProvider(providerId: string): Promise<void> {
+    await fetch(`/api/connectivity/providers/${providerId}/disconnect`, {
+      method: 'POST',
+    });
   },
 };
