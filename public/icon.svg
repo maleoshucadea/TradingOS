@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <rect width="512" height="512" rx="96" fill="#090c0e"/>
+  <rect x="24" y="24" width="464" height="464" rx="80" fill="#0f1418" stroke="#1d262d" stroke-width="6"/>
+  <!-- Terminal Grid Accents -->
+  <path d="M64 128h384M64 256h384M64 384h384M128 64v384M256 64v384M384 64v384" stroke="#182026" stroke-width="2" stroke-dasharray="4 8"/>
+  <!-- Chart Candlesticks / Technical Bars -->
+  <line x1="160" y1="280" x2="160" y2="400" stroke="#00f5ff" stroke-width="4" stroke-linecap="round"/>
+  <rect x="146" y="310" width="28" height="60" rx="4" fill="#00f5ff" fill-opacity="0.2" stroke="#00f5ff" stroke-width="3"/>
+  <line x1="256" y1="180" x2="256" y2="340" stroke="#c6f135" stroke-width="4" stroke-linecap="round"/>
+  <rect x="242" y="210" width="28" height="90" rx="4" fill="#c6f135" stroke="#c6f135" stroke-width="3"/>
+  <line x1="352" y1="120" x2="352" y2="270" stroke="#c6f135" stroke-width="4" stroke-linecap="round"/>
+  <rect x="338" y="140" width="28" height="80" rx="4" fill="#c6f135" fill-opacity="0.8" stroke="#c6f135" stroke-width="3"/>
+  <!-- Trend Vector Line -->
+  <polyline points="100,380 160,340 256,220 352,160 412,120" fill="none" stroke="#c6f135" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="412" cy="120" r="10" fill="#c6f135"/>
+  <!-- Technical OS Glyph -->
+  <text x="72" y="440" font-family="'IBM Plex Mono', monospace" font-size="32" font-weight="700" fill="#c6f135" letter-spacing="2">TRADING.OS</text>
+  <text x="372" y="440" font-family="'IBM Plex Mono', monospace" font-size="24" font-weight="500" fill="#00f5ff">v1.0</text>
+</svg>

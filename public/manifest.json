@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "TradingOS — Personal Trading Intelligence Platform",
+  "short_name": "TradingOS",
+  "description": "Mobile-first personal trading intelligence platform, structured strategy workstation, and risk evaluation operating system.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#090c0e",
+  "theme_color": "#090c0e",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
