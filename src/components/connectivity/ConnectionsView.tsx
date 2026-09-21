@@ -25,6 +25,7 @@ import { DiagnosticsReportView } from './DiagnosticsReportView';
 import { BridgeSetupModal } from './BridgeSetupModal';
 import { AccountSummaryView } from './AccountSummaryView';
 import { LiveQuoteProbe } from './LiveQuoteProbe';
+import { DerivProviderView } from './DerivProviderView';
 
 export const ConnectionsView: React.FC = () => {
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
@@ -163,14 +164,14 @@ export const ConnectionsView: React.FC = () => {
         <Shield className="w-4 h-4 text-[#c6f135] shrink-0 mt-0.5" />
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-white tracking-wider">MILESTONE 1: READ-ONLY CONNECTIVITY FOUNDATION</span>
+            <span className="font-bold text-white tracking-wider">MILESTONE 2A: DERIV DEMO & MT5 READ-ONLY CONNECTIVITY</span>
             <span className="text-[10px] px-2 py-0.2 rounded bg-rose-950 text-rose-300 border border-rose-800 font-bold">
               EXECUTION GATED
             </span>
           </div>
           <p className="text-gray-400 text-[11px] leading-relaxed mt-1">
-            Live order execution, position modification, and automated trade entry are completely locked.
-            This area validates proof-of-connection telemetry, terminal health verification, broker balance inspection, and real-time market quote feeds.
+            Live order execution, position modification, and automated trade entry are strictly prohibited.
+            This connectivity hub validates real-time provider telemetry, Deriv Demo virtual account synchronization, OAuth 2.0 PKCE verification, MT5 terminal health, and live market quotes.
           </p>
         </div>
       </div>
@@ -408,6 +409,15 @@ export const ConnectionsView: React.FC = () => {
             )}
           </div>
         </div>
+      ) : activeProvider && activeProvider.type === 'DERIV' ? (
+        <DerivProviderView
+          provider={activeProvider}
+          onRefresh={loadProviders}
+          onNotify={(msg) => {
+            setNotification(msg);
+            setTimeout(() => setNotification(null), 4000);
+          }}
+        />
       ) : activeProvider ? (
         /* Stub / Architecture-Ready Provider Card */
         <div className="bg-[#0a0e12] border border-[#18232e] rounded-xl p-5 space-y-4">

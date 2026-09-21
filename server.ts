@@ -468,10 +468,12 @@ app.get('/api/analytics', (req: Request, res: Response) => {
   res.json(analytics);
 });
 
-// 12. CONNECTIVITY & BROKER PROVIDER LAYER (Milestone 1: Proof of Connection)
+// 12. CONNECTIVITY & BROKER PROVIDER LAYER (Milestone 1 & 2A: MT5 & Deriv Demo)
 const UpdateProviderConfigSchema = z.object({
   bridgeUrl: z.string().url('Must be a valid URL (e.g. http://127.0.0.1:8001)').optional(),
   bridgeToken: z.string().optional(),
+  appId: z.string().optional(),
+  apiToken: z.string().optional(),
   enabled: z.boolean().optional(),
   isSandboxOverride: z.boolean().optional(),
 });
@@ -500,8 +502,8 @@ app.get('/api/connectivity/providers/:id/status', async (req: Request, res: Resp
   }
 });
 
-// Run full diagnostic connection probe
-app.post('/api/connectivity/providers/:id/test', async (req: Request, res: Response) => {
+// Run full diagnostic connection probe (supports both POST and GET)
+app.all('/api/connectivity/providers/:id/test', async (req: Request, res: Response) => {
   try {
     const report = await providerManager.testProvider(req.params.id);
     res.json(report);
@@ -535,9 +537,9 @@ app.get('/api/connectivity/providers/:id/symbols', async (req: Request, res: Res
 });
 
 // Retrieve real market quote
-app.get('/api/connectivity/providers/:id/quote', async (req: Request, res: Response) => {
+app.get(['/api/connectivity/providers/:id/quote', '/api/connectivity/providers/:id/quotes/:symbol'], async (req: Request, res: Response) => {
   try {
-    const symbol = (req.query.symbol as string) || 'EURUSD';
+    const symbol = (req.params.symbol || req.query.symbol as string) || 'EURUSD';
     const quote = await providerManager.getQuote(req.params.id, symbol);
     res.json(quote);
   } catch (err: any) {
@@ -580,6 +582,232 @@ app.post('/api/connectivity/providers/:id/disconnect', async (req: Request, res:
   }
 });
 
+// --- DERIV OAUTH 2.0 PKCE & SESSION ENDPOINTS ---
+
+// Deriv OAuth PKCE: Generate authorization URL
+app.get('/api/connectivity/deriv/auth-url', (req: Request, res: Response) => {
+  try {
+    const deriv = providerManager.getDerivProvider();
+    if (!deriv) {
+      return res.status(404).json({ error: 'Deriv provider not found' });
+    }
+
+    const host = req.get('host') || 'localhost:3000';
+    const proto = req.protocol === 'https' || req.get('x-forwarded-proto') === 'https' ? 'https' : 'http';
+    const baseUrl = process.env.APP_URL || `${proto}://${host}`;
+    const defaultRedirect = `${baseUrl.replace(/\/$/, '')}/auth/deriv/callback`;
+    const redirectUri = (req.query.redirectUri as string) || process.env.DERIV_OAUTH_REDIRECT_URI || defaultRedirect;
+
+    const auth = deriv.initiateOAuth(redirectUri);
+    res.json({
+      authUrl: auth.authUrl,
+      state: auth.state,
+      redirectUri,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: 'Failed to initiate Deriv OAuth flow', details: err.message });
+  }
+});
+
+// Deriv OAuth PKCE: Exchange authorization code for token
+app.post('/api/connectivity/deriv/exchange-code', async (req: Request, res: Response) => {
+  try {
+    const { code, state, redirectUri } = req.body;
+    if (!code || !state) {
+      return res.status(400).json({ error: 'Missing code or state parameter' });
+    }
+
+    const deriv = providerManager.getDerivProvider();
+    if (!deriv) {
+      return res.status(404).json({ error: 'Deriv provider not found' });
+    }
+
+    const account = await deriv.handleOAuthCallback(code, state, redirectUri);
+    res.json({ success: true, account });
+  } catch (err: any) {
+    res.status(400).json({ error: 'OAuth exchange failed', details: err.message });
+  }
+});
+
+// Deriv Direct Token Authentication (for direct Demo tokens or manual token entry)
+app.post('/api/connectivity/deriv/token', async (req: Request, res: Response) => {
+  try {
+    const { token, accountId } = req.body;
+    if (!token) {
+      return res.status(400).json({ error: 'Missing token parameter' });
+    }
+
+    const deriv = providerManager.getDerivProvider();
+    if (!deriv) {
+      return res.status(404).json({ error: 'Deriv provider not found' });
+    }
+
+    const account = await deriv.handleDirectToken(token, accountId);
+    res.json({ success: true, account });
+  } catch (err: any) {
+    res.status(400).json({ error: 'Token verification failed', details: err.message });
+  }
+});
+
+// Deriv OAuth Callback Ingress (Served directly for both Popup and Mobile browser redirects)
+app.get('/auth/deriv/callback', (req: Request, res: Response) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Deriv Authentication - TradingOS</title>
+  <style>
+    body {
+      background-color: #06090b;
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+    .card {
+      background: #0d141a;
+      border: 1px solid #1c2b36;
+      border-radius: 12px;
+      padding: 28px 24px;
+      max-width: 420px;
+      width: 100%;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      background: rgba(198, 241, 53, 0.15);
+      border: 1px solid rgba(198, 241, 53, 0.3);
+      color: #c6f135;
+      font-size: 11px;
+      font-weight: bold;
+      border-radius: 4px;
+      margin-bottom: 16px;
+      letter-spacing: 0.05em;
+    }
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 3px solid #1e293b;
+      border-top-color: #c6f135;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 16px auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .status { font-size: 13px; color: #94a3b8; line-height: 1.5; margin-top: 12px; }
+    .error { color: #f87171; }
+    .btn {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 18px;
+      background: #c6f135;
+      color: #000;
+      font-weight: bold;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 12px;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">TRADINGOS • DERIV DEMO</div>
+    <div id="spinner" class="spinner"></div>
+    <h3 id="title" style="margin: 0; font-size: 16px; font-weight: 700;">Processing Authentication...</h3>
+    <div id="status" class="status">Exchanging authorization credentials with Deriv...</div>
+    <div id="actionArea"></div>
+  </div>
+
+  <script>
+    (async function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const hash = window.location.hash.substring(1);
+      const hashParams = new URLSearchParams(hash);
+
+      const code = urlParams.get('code') || hashParams.get('code');
+      const state = urlParams.get('state') || hashParams.get('state');
+      const error = urlParams.get('error') || hashParams.get('error');
+
+      const titleEl = document.getElementById('title');
+      const statusEl = document.getElementById('status');
+      const spinnerEl = document.getElementById('spinner');
+      const actionArea = document.getElementById('actionArea');
+
+      if (error) {
+        spinnerEl.style.display = 'none';
+        titleEl.textContent = 'Authentication Declined';
+        titleEl.classList.add('error');
+        statusEl.textContent = 'Deriv returned an authorization error: ' + error;
+        actionArea.innerHTML = '<button class="btn" onclick="window.close()">Close Window</button>';
+        return;
+      }
+
+      const token1 = urlParams.get('token1') || hashParams.get('token1');
+      const acct1 = urlParams.get('acct1') || hashParams.get('acct1');
+
+      try {
+        let authSuccess = false;
+
+        if (code && state) {
+          const resp = await fetch('/api/connectivity/deriv/exchange-code', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code, state })
+          });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.details || data.error || 'Token exchange failed');
+          authSuccess = true;
+        } else if (token1) {
+          const resp = await fetch('/api/connectivity/deriv/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ token: token1, accountId: acct1 })
+          });
+          const data = await resp.json();
+          if (!resp.ok) throw new Error(data.details || data.error || 'Token verification failed');
+          authSuccess = true;
+        } else {
+          throw new Error('No authorization code or token found in redirect URL.');
+        }
+
+        if (authSuccess) {
+          spinnerEl.style.display = 'none';
+          titleEl.textContent = 'DERIV DEMO CONNECTED';
+          titleEl.style.color = '#c6f135';
+          statusEl.textContent = 'Authentication verified successfully. Returning to TradingOS...';
+
+          if (window.opener && !window.opener.closed) {
+            window.opener.postMessage({ type: 'DERIV_AUTH_SUCCESS', timestamp: Date.now() }, '*');
+            setTimeout(() => { window.close(); }, 1200);
+          } else {
+            actionArea.innerHTML = '<a class="btn" href="/broker">Return to TradingOS</a>';
+            setTimeout(() => { window.location.href = '/broker'; }, 1500);
+          }
+        }
+      } catch (err) {
+        spinnerEl.style.display = 'none';
+        titleEl.textContent = 'Connection Error';
+        titleEl.classList.add('error');
+        statusEl.textContent = err.message || 'Failed to complete Deriv connection.';
+        actionArea.innerHTML = '<button class="btn" onclick="window.close()">Close</button>';
+      }
+    })();
+  </script>
+</body>
+</html>`);
+});
+
 // TradingView Webhook Ingress (Event & Signal Receiver)
 app.post('/api/connectivity/tradingview/webhook', (req: Request, res: Response) => {
   const alertPayload = req.body;
@@ -589,7 +817,7 @@ app.post('/api/connectivity/tradingview/webhook', (req: Request, res: Response) 
     ingress: 'TradingView Webhook',
     timestamp: new Date().toISOString(),
     payloadSummary: alertPayload?.ticker || alertPayload?.action || 'Generic Alert',
-    readOnlyNotice: 'Alert logged. Live order execution is strictly disabled in Milestone 1.',
+    readOnlyNotice: 'Alert logged. Live order execution is strictly disabled.',
   });
 });
 
@@ -597,7 +825,7 @@ app.post('/api/connectivity/tradingview/webhook', (req: Request, res: Response) 
 app.all(['/api/orders*', '/api/trades/execute*', '/api/positions/close*'], (req: Request, res: Response) => {
   res.status(403).json({
     error: 'EXECUTION_BLOCKED_READ_ONLY_MILESTONE',
-    message: 'TradingOS is currently in Milestone 1: Read-Only Connectivity Foundation. Live order execution and position modifications are physically prohibited.',
+    message: 'TradingOS is currently in Read-Only Connectivity Mode (MT5 & Deriv Demo). Live order execution and position modifications are physically prohibited.',
     tradingAllowed: false,
     timestamp: new Date().toISOString(),
   });

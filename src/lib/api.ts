@@ -576,4 +576,40 @@ export const api = {
       method: 'POST',
     });
   },
+
+  async getDerivAuthUrl(redirectUri?: string): Promise<{ authUrl: string; state: string; redirectUri: string }> {
+    const query = redirectUri ? `?redirectUri=${encodeURIComponent(redirectUri)}` : '';
+    const res = await fetch(`/api/connectivity/deriv/auth-url${query}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.message || 'Failed to generate Deriv OAuth URL');
+    }
+    return await res.json();
+  },
+
+  async exchangeDerivCode(code: string, state: string, redirectUri?: string): Promise<{ success: boolean; account: NormalizedAccount }> {
+    const res = await fetch('/api/connectivity/deriv/exchange-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, state, redirectUri }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.details || err.error || 'Token exchange failed');
+    }
+    return await res.json();
+  },
+
+  async connectDerivWithToken(token: string, accountId?: string): Promise<{ success: boolean; account: NormalizedAccount }> {
+    const res = await fetch('/api/connectivity/deriv/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, accountId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.details || err.error || 'Deriv token verification failed');
+    }
+    return await res.json();
+  },
 };

@@ -42,6 +42,7 @@ export interface NormalizedAccount {
   tradeAllowed: boolean; // false in this milestone
   updatedAt: string;
   dataSourceType: 'REAL_TERMINAL' | 'DEMO_TERMINAL' | 'SIMULATED_SANDBOX';
+  accountEnvironment?: 'DEMO' | 'REAL' | 'UNKNOWN';
 }
 
 export interface NormalizedQuote {
@@ -88,7 +89,7 @@ export interface NormalizedSymbol {
   tradeMode: string;
 }
 
-export type DiagnosticStepStatus = 'PASS' | 'FAIL' | 'SKIPPED' | 'RUNNING';
+export type DiagnosticStepStatus = 'PASS' | 'FAIL' | 'WARNING' | 'SKIPPED' | 'RUNNING';
 
 export interface ConnectionDiagnosticStep {
   id: string;
@@ -124,6 +125,9 @@ export interface ProviderConfig {
   enabled: boolean;
   bridgeUrl?: string; // Default e.g. 'http://127.0.0.1:8001'
   bridgeToken?: string;
+  appId?: string; // Deriv Application ID
+  apiToken?: string; // Deriv direct API token
+  oauthRedirectUri?: string;
   environment?: 'PRODUCTION' | 'DEMO' | 'SANDBOX';
   readOnlyEnforced: true;
 }
@@ -137,11 +141,15 @@ export interface ProviderSummary {
   statusMessage: string;
   capabilities: ProviderCapabilities;
   account?: NormalizedAccount;
+  accountEnvironment?: 'DEMO' | 'REAL' | 'UNKNOWN';
   lastChecked?: string;
   config: {
     bridgeUrl?: string;
     hasToken?: boolean;
     isLocal?: boolean;
+    appId?: string;
+    tokenMasked?: string;
+    accountEnvironment?: 'DEMO' | 'REAL' | 'UNKNOWN';
     readOnlyEnforced: true;
   };
 }
