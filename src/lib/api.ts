@@ -429,10 +429,10 @@ export const api = {
       {
         id: 'ctrader-primary',
         type: 'CTRADER',
-        name: 'cTrader Open API (Architecture Ready)',
+        name: 'cTrader Open API (Demo)',
         version: '1.0.0',
         status: 'UNCONFIGURED',
-        statusMessage: 'cTrader Open API integration architecture ready.',
+        statusMessage: 'cTrader Open API integration ready for OAuth authentication.',
         capabilities: {
           readAccount: true,
           readQuotes: true,
@@ -440,7 +440,7 @@ export const api = {
           readPositions: true,
           readOrders: true,
           readHistory: true,
-          webhooks: true,
+          webhooks: false,
           liveExecution: false,
         },
         config: {
@@ -611,5 +611,60 @@ export const api = {
       throw new Error(err.details || err.error || 'Deriv token verification failed');
     }
     return await res.json();
+  },
+
+  async getCTraderAuthUrl(redirectUri?: string): Promise<{ authUrl: string; state: string; redirectUri: string }> {
+    const query = redirectUri ? `?redirectUri=${encodeURIComponent(redirectUri)}` : '';
+    const res = await fetch(`/api/connectivity/ctrader/auth-url${query}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.details || err.error || err.message || 'Failed to generate cTrader authorization URL');
+    }
+    return await res.json();
+  },
+
+  async exchangeCTraderCode(
+    code: string,
+    state?: string,
+    redirectUri?: string
+  ): Promise<{ success: boolean; account: NormalizedAccount; availableAccounts: any[] }> {
+    const res = await fetch('/api/connectivity/ctrader/exchange-code', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, state, redirectUri }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.details || err.error || 'cTrader token exchange failed');
+    }
+    return await res.json();
+  },
+
+  async getCTraderAccounts(): Promise<{ availableAccounts: any[]; selectedAccountId?: number; currentAccount?: NormalizedAccount }> {
+    const res = await fetch('/api/connectivity/ctrader/accounts');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.details || err.error || 'Failed to retrieve cTrader accounts');
+    }
+    return await res.json();
+  },
+
+  async selectCTraderAccount(accountId: number): Promise<{ success: boolean; account: NormalizedAccount }> {
+    const res = await fetch('/api/connectivity/ctrader/select-account', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountId }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.details || err.error || 'Failed to select cTrader account');
+    }
+    return await res.json();
+  },
+
+  async disconnectCTrader(): Promise<void> {
+    await fetch('/api/connectivity/ctrader/disconnect', {
+      method: 'POST',
+    });
   },
 };

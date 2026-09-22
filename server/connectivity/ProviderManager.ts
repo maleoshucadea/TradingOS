@@ -26,6 +26,10 @@ export class ProviderManager {
     return this.providers.get('deriv-primary') as DerivProvider | undefined;
   }
 
+  public getCTraderProvider(): CTraderProvider | undefined {
+    return this.providers.get('ctrader-primary') as CTraderProvider | undefined;
+  }
+
   public async getAllSummaries(): Promise<ProviderSummary[]> {
     const summaries: ProviderSummary[] = [];
     for (const provider of this.providers.values()) {

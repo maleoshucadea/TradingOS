@@ -133,6 +133,16 @@ export interface ProviderConfig {
   readOnlyEnforced: true;
 }
 
+export interface CTraderAccountOption {
+  ctidTraderAccountId: number;
+  traderLogin?: number;
+  isLive: boolean;
+  brokerName?: string;
+  currency?: string;
+  balance?: number;
+  leverage?: number;
+}
+
 export interface ProviderSummary {
   id: string;
   type: ProviderType;
@@ -144,6 +154,8 @@ export interface ProviderSummary {
   account?: NormalizedAccount;
   accountEnvironment?: 'DEMO' | 'REAL' | 'UNKNOWN';
   lastChecked?: string;
+  availableAccounts?: CTraderAccountOption[];
+  selectedAccountId?: number;
   config: {
     bridgeUrl?: string;
     hasToken?: boolean;
@@ -154,6 +166,7 @@ export interface ProviderSummary {
     readOnlyEnforced: true;
     hasClientId?: boolean;
     clientIdMasked?: string;
+    hasClientSecret?: boolean;
     redirectUri?: string;
   };
 }

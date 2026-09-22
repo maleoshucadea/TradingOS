@@ -26,12 +26,16 @@ import { BridgeSetupModal } from './BridgeSetupModal';
 import { AccountSummaryView } from './AccountSummaryView';
 import { LiveQuoteProbe } from './LiveQuoteProbe';
 import { DerivProviderView } from './DerivProviderView';
+import { CTraderProviderView } from './CTraderProviderView';
 
 export const ConnectionsView: React.FC = () => {
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [selectedProviderId, setSelectedProviderId] = useState<string>(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
+      if (params.get('provider') === 'ctrader' || params.get('provider') === 'ctrader-primary') {
+        return 'ctrader-primary';
+      }
       if (params.has('oauth_success') || params.has('oauth_error') || params.get('provider') === 'deriv' || params.get('provider') === 'deriv-demo') {
         return 'deriv-demo';
       }
@@ -172,14 +176,14 @@ export const ConnectionsView: React.FC = () => {
         <Shield className="w-4 h-4 text-[#c6f135] shrink-0 mt-0.5" />
         <div className="flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-bold text-white tracking-wider">MILESTONE 2A: DERIV DEMO & MT5 READ-ONLY CONNECTIVITY</span>
+            <span className="font-bold text-white tracking-wider">READ-ONLY CONNECTIVITY HUB: CTRADER DEMO, DERIV DEMO & MT5</span>
             <span className="text-[10px] px-2 py-0.2 rounded bg-rose-950 text-rose-300 border border-rose-800 font-bold">
               EXECUTION GATED
             </span>
           </div>
           <p className="text-gray-400 text-[11px] leading-relaxed mt-1">
             Live order execution, position modification, and automated trade entry are strictly prohibited.
-            This connectivity hub validates real-time provider telemetry, Deriv Demo virtual account synchronization, OAuth 2.0 PKCE verification, MT5 terminal health, and live market quotes.
+            This connectivity hub validates real-time provider telemetry, cTrader Open API OAuth 2.0 demo synchronization, Deriv Demo virtual account telemetry, MT5 terminal health, and live quotes.
           </p>
         </div>
       </div>
@@ -419,6 +423,15 @@ export const ConnectionsView: React.FC = () => {
         </div>
       ) : activeProvider && activeProvider.type === 'DERIV' ? (
         <DerivProviderView
+          provider={activeProvider}
+          onRefresh={loadProviders}
+          onNotify={(msg) => {
+            setNotification(msg);
+            setTimeout(() => setNotification(null), 4000);
+          }}
+        />
+      ) : activeProvider && activeProvider.type === 'CTRADER' ? (
+        <CTraderProviderView
           provider={activeProvider}
           onRefresh={loadProviders}
           onNotify={(msg) => {

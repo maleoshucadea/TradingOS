@@ -1,6 +1,6 @@
 {
   "name": "TradingOS",
-  "description": "Mobile-first personal trading intelligence platform with MT5 and Deriv Demo read-only connectivity.",
+  "description": "Mobile-first personal trading intelligence platform with MT5, Deriv Demo, and cTrader Open API read-only connectivity.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

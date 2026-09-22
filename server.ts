@@ -837,11 +837,389 @@ app.post('/api/connectivity/tradingview/webhook', (req: Request, res: Response) 
   });
 });
 
+// cTrader Open API OAuth: Generate official authorization URL
+app.get('/api/connectivity/ctrader/auth-url', (req: Request, res: Response) => {
+  try {
+    const ctrader = providerManager.getCTraderProvider();
+    if (!ctrader) {
+      return res.status(404).json({ error: 'cTrader provider not found' });
+    }
+
+    const requestedRedirect = (req.query.redirectUri as string) || undefined;
+    const auth = ctrader.getAuthorizationUrl(requestedRedirect);
+    res.json({
+      authUrl: auth.authUrl,
+      state: auth.state,
+      redirectUri: auth.redirectUri,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: 'Failed to initiate cTrader OAuth flow', details: err.message });
+  }
+});
+
+// cTrader OAuth: Exchange authorization code server-to-server
+app.post('/api/connectivity/ctrader/exchange-code', async (req: Request, res: Response) => {
+  try {
+    const { code, state, redirectUri } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: 'Missing code parameter' });
+    }
+
+    const ctrader = providerManager.getCTraderProvider();
+    if (!ctrader) {
+      return res.status(404).json({ error: 'cTrader provider not found' });
+    }
+
+    const result = await ctrader.exchangeAuthorizationCode(code, state, redirectUri);
+    res.json({ success: true, account: result.account, availableAccounts: result.availableAccounts });
+  } catch (err: any) {
+    res.status(400).json({ error: 'cTrader token exchange failed', details: err.message });
+  }
+});
+
+// cTrader: Enumerate available accounts for active access token
+app.get('/api/connectivity/ctrader/accounts', async (req: Request, res: Response) => {
+  try {
+    const ctrader = providerManager.getCTraderProvider();
+    if (!ctrader) {
+      return res.status(404).json({ error: 'cTrader provider not found' });
+    }
+
+    const summary = await ctrader.getStatus();
+    res.json({
+      availableAccounts: summary.availableAccounts || [],
+      selectedAccountId: summary.selectedAccountId,
+      currentAccount: summary.account,
+    });
+  } catch (err: any) {
+    res.status(400).json({ error: 'Failed to retrieve cTrader accounts', details: err.message });
+  }
+});
+
+// cTrader: Select active trading account from available accounts
+app.post('/api/connectivity/ctrader/select-account', async (req: Request, res: Response) => {
+  try {
+    const { accountId } = req.body;
+    if (!accountId) {
+      return res.status(400).json({ error: 'Missing accountId parameter' });
+    }
+
+    const ctrader = providerManager.getCTraderProvider();
+    if (!ctrader) {
+      return res.status(404).json({ error: 'cTrader provider not found' });
+    }
+
+    const account = await ctrader.selectAccount(Number(accountId));
+    res.json({ success: true, account });
+  } catch (err: any) {
+    res.status(400).json({ error: 'Failed to switch cTrader account', details: err.message });
+  }
+});
+
+// cTrader: Disconnect active session
+app.post('/api/connectivity/ctrader/disconnect', async (req: Request, res: Response) => {
+  try {
+    const ctrader = providerManager.getCTraderProvider();
+    if (ctrader) {
+      await ctrader.disconnect();
+    }
+    res.json({ success: true });
+  } catch (err: any) {
+    res.status(400).json({ error: 'Failed to disconnect cTrader', details: err.message });
+  }
+});
+
+// cTrader OAuth Callback Ingress (Served directly for both Popup and Mobile browser redirects)
+app.get('/auth/ctrader/callback', async (req: Request, res: Response) => {
+  const code = (req.query.code as string) || '';
+  const state = (req.query.state as string) || '';
+  const error = (req.query.error as string) || '';
+  const errorDesc = (req.query.error_description as string) || '';
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+
+  // Handle OAuth Denial or cTrader error parameter
+  if (error) {
+    const displayErr = error + (errorDesc ? ': ' + errorDesc : '');
+    const encodedErr = encodeURIComponent(displayErr);
+    return res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cTrader Authentication - TradingOS</title>
+  <style>
+    body {
+      background-color: #06090b;
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+    .card {
+      background: #0d141a;
+      border: 1px solid #1c2b36;
+      border-radius: 12px;
+      padding: 28px 24px;
+      max-width: 440px;
+      width: 100%;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      font-size: 11px;
+      font-weight: bold;
+      border-radius: 4px;
+      margin-bottom: 16px;
+      letter-spacing: 0.05em;
+    }
+    .status { font-size: 13px; color: #94a3b8; line-height: 1.5; margin-top: 12px; word-break: break-word; }
+    .btn {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 18px;
+      background: #c6f135;
+      color: #000;
+      font-weight: bold;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 12px;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">TRADINGOS • CTRADER OPEN API</div>
+    <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #f87171;">Authorization Declined</h3>
+    <div class="status">cTrader returned an error: ${displayErr}</div>
+    <div style="margin-top: 20px;">
+      <a class="btn" href="/?module=connectivity&provider=ctrader-primary&oauth_error=${encodedErr}">Return to TradingOS</a>
+    </div>
+  </div>
+  <script>
+    if (window.opener && !window.opener.closed) {
+      try {
+        window.opener.postMessage({ type: 'CTRADER_AUTH_ERROR', error: ${JSON.stringify(displayErr)} }, '*');
+      } catch(e) {}
+    }
+  </script>
+</body>
+</html>`);
+  }
+
+  // Validate presence of authorization code
+  if (!code) {
+    return res.status(400).send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cTrader Authentication - TradingOS</title>
+  <style>
+    body {
+      background-color: #06090b;
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+    .card {
+      background: #0d141a;
+      border: 1px solid #1c2b36;
+      border-radius: 12px;
+      padding: 28px 24px;
+      max-width: 440px;
+      width: 100%;
+    }
+    .status { font-size: 13px; color: #f87171; line-height: 1.5; margin-top: 12px; }
+    .btn { display: inline-block; margin-top: 20px; padding: 10px 18px; background: #c6f135; color: #000; font-weight: bold; text-decoration: none; border-radius: 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #f87171;">Missing Authorization Code</h3>
+    <div class="status">The callback request did not contain a valid ?code= query parameter from cTrader.</div>
+    <a class="btn" href="/?module=connectivity&provider=ctrader-primary">Return to TradingOS</a>
+  </div>
+</body>
+</html>`);
+  }
+
+  // Server-to-server token exchange
+  try {
+    const ctrader = providerManager.getCTraderProvider();
+    if (!ctrader) {
+      throw new Error('cTrader provider not registered.');
+    }
+
+    const exchangeResult = await ctrader.exchangeAuthorizationCode(code, state);
+    const account = exchangeResult.account;
+    const accountLabel = account ? account.accountName : 'cTrader Account';
+    const balanceLabel = account ? '$' + account.balance.toFixed(2) : 'Active';
+
+    return res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cTrader Authentication - TradingOS</title>
+  <style>
+    body {
+      background-color: #06090b;
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+    .card {
+      background: #0d141a;
+      border: 1px solid #1c2b36;
+      border-radius: 12px;
+      padding: 28px 24px;
+      max-width: 440px;
+      width: 100%;
+      box-shadow: 0 8px 30px rgba(0,0,0,0.5);
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      background: rgba(198, 241, 53, 0.15);
+      border: 1px solid rgba(198, 241, 53, 0.3);
+      color: #c6f135;
+      font-size: 11px;
+      font-weight: bold;
+      border-radius: 4px;
+      margin-bottom: 16px;
+      letter-spacing: 0.05em;
+    }
+    .status { font-size: 13px; color: #94a3b8; line-height: 1.5; margin-top: 12px; word-break: break-word; }
+    .btn {
+      display: inline-block;
+      margin-top: 20px;
+      padding: 10px 18px;
+      background: #c6f135;
+      color: #000;
+      font-weight: bold;
+      text-decoration: none;
+      border-radius: 6px;
+      font-size: 12px;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">TRADINGOS • CTRADER DEMO</div>
+    <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #c6f135;">Authentication Successful!</h3>
+    <div class="status">
+      Connected to <strong>${accountLabel}</strong><br>
+      Balance: <strong style="color: #c6f135;">${balanceLabel}</strong> (Read-Only Mode)
+    </div>
+    <div style="margin-top: 20px;">
+      <a class="btn" id="returnBtn" href="/?module=connectivity&provider=ctrader-primary&oauth_success=1">Return to TradingOS</a>
+    </div>
+  </div>
+  <script>
+    if (window.opener && !window.opener.closed) {
+      try {
+        window.opener.postMessage({
+          type: 'CTRADER_AUTH_SUCCESS',
+          account: ${JSON.stringify(account)},
+          availableAccounts: ${JSON.stringify(exchangeResult.availableAccounts)}
+        }, '*');
+        setTimeout(function() { window.close(); }, 1200);
+      } catch(e) {}
+    } else {
+      setTimeout(function() {
+        window.location.href = '/?module=connectivity&provider=ctrader-primary&oauth_success=1';
+      }, 1500);
+    }
+  </script>
+</body>
+</html>`);
+  } catch (err: any) {
+    const displayErr = err.message || 'Server-to-server token exchange failed';
+    const encodedErr = encodeURIComponent(displayErr);
+    return res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>cTrader Authentication - TradingOS</title>
+  <style>
+    body {
+      background-color: #06090b;
+      color: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+    }
+    .card {
+      background: #0d141a;
+      border: 1px solid #1c2b36;
+      border-radius: 12px;
+      padding: 28px 24px;
+      max-width: 440px;
+      width: 100%;
+    }
+    .status { font-size: 13px; color: #f87171; line-height: 1.5; margin-top: 12px; word-break: break-word; }
+    .btn { display: inline-block; margin-top: 20px; padding: 10px 18px; background: #c6f135; color: #000; font-weight: bold; text-decoration: none; border-radius: 6px; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h3 style="margin: 0; font-size: 16px; font-weight: 700; color: #f87171;">Token Exchange Failed</h3>
+    <div class="status">${displayErr}</div>
+    <a class="btn" href="/?module=connectivity&provider=ctrader-primary&oauth_error=${encodedErr}">Return to TradingOS</a>
+  </div>
+  <script>
+    if (window.opener && !window.opener.closed) {
+      try {
+        window.opener.postMessage({ type: 'CTRADER_AUTH_ERROR', error: ${JSON.stringify(displayErr)} }, '*');
+      } catch(e) {}
+    }
+  </script>
+</body>
+</html>`);
+  }
+});
+
 // STRICT SAFETY BOUNDARY: Hard-block any live order placement, trade execution, or position closure
 app.all(['/api/orders*', '/api/trades/execute*', '/api/positions/close*'], (req: Request, res: Response) => {
   res.status(403).json({
     error: 'EXECUTION_BLOCKED_READ_ONLY_MILESTONE',
-    message: 'TradingOS is currently in Read-Only Connectivity Mode (MT5 & Deriv Demo). Live order execution and position modifications are physically prohibited.',
+    message: 'TradingOS is currently in Read-Only Connectivity Mode (MT5, Deriv Demo, & cTrader Demo). Live order execution and position modifications are physically prohibited.',
     tradingAllowed: false,
     timestamp: new Date().toISOString(),
   });

@@ -48,7 +48,7 @@ export class DerivProvider implements ITradingOSProvider {
 
   constructor() {
     this.appId = (process.env.DERIV_APP_ID || '1089').trim();
-    this.clientId = (process.env.DERIV_CLIENT_ID || '34t9kRx3hL9lX4C5wluzK').trim();
+    this.clientId = (process.env.DERIV_CLIENT_ID || '').trim();
     if (process.env.DERIV_API_TOKEN) {
       this.apiToken = process.env.DERIV_API_TOKEN;
       this.statusMessage = 'Deriv API Token detected from environment. Ready for connection test.';
@@ -56,7 +56,7 @@ export class DerivProvider implements ITradingOSProvider {
   }
 
   public getClientId(): string {
-    return (process.env.DERIV_CLIENT_ID || this.clientId || '34t9kRx3hL9lX4C5wluzK').trim();
+    return (process.env.DERIV_CLIENT_ID || this.clientId || this.getAppId()).trim();
   }
 
   public getAppId(): string {
@@ -69,7 +69,7 @@ export class DerivProvider implements ITradingOSProvider {
    * 1. Explicit DERIV_OAUTH_REDIRECT_URI from environment
    * 2. Custom requested redirect URI from client window origin
    * 3. APP_URL/auth/deriv/callback from deployment
-   * 4. Public production Shared App URL callback
+   * 4. Render production deployment callback
    */
   public getEffectiveRedirectUri(customRedirectUri?: string): string {
     if (process.env.DERIV_OAUTH_REDIRECT_URI && process.env.DERIV_OAUTH_REDIRECT_URI.trim()) {
@@ -82,7 +82,7 @@ export class DerivProvider implements ITradingOSProvider {
     if (appUrl && appUrl.trim()) {
       return `${appUrl.trim().replace(/\/$/, '')}/auth/deriv/callback`;
     }
-    return 'https://ais-pre-hywevvzlyhk6yukcnxt3ce-914291647670.europe-west2.run.app/auth/deriv/callback';
+    return 'https://tradingos-1.onrender.com/auth/deriv/callback';
   }
 
   // --- PKCE & OAUTH 2.0 HELPERS ---
