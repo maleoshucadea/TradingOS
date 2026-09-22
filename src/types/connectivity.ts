@@ -126,6 +126,7 @@ export interface ProviderConfig {
   bridgeUrl?: string; // Default e.g. 'http://127.0.0.1:8001'
   bridgeToken?: string;
   appId?: string; // Deriv Application ID
+  clientId?: string;
   apiToken?: string; // Deriv direct API token
   oauthRedirectUri?: string;
   environment?: 'PRODUCTION' | 'DEMO' | 'SANDBOX';
@@ -151,6 +152,9 @@ export interface ProviderSummary {
     tokenMasked?: string;
     accountEnvironment?: 'DEMO' | 'REAL' | 'UNKNOWN';
     readOnlyEnforced: true;
+    hasClientId?: boolean;
+    clientIdMasked?: string;
+    redirectUri?: string;
   };
 }
 

@@ -47,8 +47,8 @@ export class DerivProvider implements ITradingOSProvider {
   private lastChecked: string = new Date().toISOString();
 
   constructor() {
-    this.appId = process.env.DERIV_APP_ID || '1089';
-    this.clientId = process.env.DERIV_CLIENT_ID || '';
+    this.appId = (process.env.DERIV_APP_ID || '1089').trim();
+    this.clientId = (process.env.DERIV_CLIENT_ID || '34t9kRx3hL9lX4C5wluzK').trim();
     if (process.env.DERIV_API_TOKEN) {
       this.apiToken = process.env.DERIV_API_TOKEN;
       this.statusMessage = 'Deriv API Token detected from environment. Ready for connection test.';
@@ -56,20 +56,20 @@ export class DerivProvider implements ITradingOSProvider {
   }
 
   public getClientId(): string {
-    return this.clientId;
+    return (process.env.DERIV_CLIENT_ID || this.clientId || '34t9kRx3hL9lX4C5wluzK').trim();
   }
 
   public getAppId(): string {
-    return this.appId;
+    return (process.env.DERIV_APP_ID || this.appId || '1089').trim();
   }
 
   /**
    * Resolves the exact redirect URI to use for both authorization and token exchange.
    * Priority:
    * 1. Explicit DERIV_OAUTH_REDIRECT_URI from environment
-   * 2. Custom requested redirect URI if provided
-   * 3. APP_URL/auth/deriv/callback from Cloud Run deployment
-   * 4. Deployed default callback URL
+   * 2. Custom requested redirect URI from client window origin
+   * 3. APP_URL/auth/deriv/callback from deployment
+   * 4. Public production Shared App URL callback
    */
   public getEffectiveRedirectUri(customRedirectUri?: string): string {
     if (process.env.DERIV_OAUTH_REDIRECT_URI && process.env.DERIV_OAUTH_REDIRECT_URI.trim()) {
@@ -82,7 +82,7 @@ export class DerivProvider implements ITradingOSProvider {
     if (appUrl && appUrl.trim()) {
       return `${appUrl.trim().replace(/\/$/, '')}/auth/deriv/callback`;
     }
-    return 'https://ais-dev-hywevvzlyhk6yukcnxt3ce-914291647670.europe-west2.run.app/auth/deriv/callback';
+    return 'https://ais-pre-hywevvzlyhk6yukcnxt3ce-914291647670.europe-west2.run.app/auth/deriv/callback';
   }
 
   // --- PKCE & OAUTH 2.0 HELPERS ---
@@ -121,7 +121,8 @@ export class DerivProvider implements ITradingOSProvider {
   public initiateOAuth(customRedirectUri?: string): { authUrl: string; state: string; redirectUri: string } {
     this.cleanExpiredSessions();
 
-    if (!this.clientId || !this.clientId.trim()) {
+    const clientId = this.getClientId();
+    if (!clientId) {
       throw new Error(
         'MISSING_OAUTH_CONFIG: DERIV_CLIENT_ID environment variable is not configured. ' +
         'Please register your OAuth 2.0 app on Deriv (https://developers.deriv.com) and set DERIV_CLIENT_ID.'
@@ -139,12 +140,12 @@ export class DerivProvider implements ITradingOSProvider {
       createdAt: Date.now(),
     });
 
-    const scope = process.env.DERIV_OAUTH_SCOPE || 'read';
+    const scope = (process.env.DERIV_OAUTH_SCOPE || 'trade').trim();
 
     // Current Deriv OAuth 2.0 Authorization Code + PKCE parameters
     const params = new URLSearchParams({
       response_type: 'code',
-      client_id: this.clientId.trim(),
+      client_id: clientId,
       redirect_uri: redirectUri,
       scope,
       state,
@@ -173,8 +174,9 @@ export class DerivProvider implements ITradingOSProvider {
     this.pkceSessions.delete(state);
 
     const targetRedirectUri = session.redirectUri;
+    const clientId = this.getClientId();
 
-    if (!this.clientId || !this.clientId.trim()) {
+    if (!clientId) {
       this.connectionStatus = 'ERROR';
       this.statusMessage = 'MISSING_OAUTH_CONFIG: DERIV_CLIENT_ID is not configured.';
       throw new Error('MISSING_OAUTH_CONFIG: DERIV_CLIENT_ID is not configured.');
@@ -184,7 +186,7 @@ export class DerivProvider implements ITradingOSProvider {
     const tokenEndpoint = 'https://auth.deriv.com/oauth2/token';
     const bodyParams = new URLSearchParams({
       grant_type: 'authorization_code',
-      client_id: this.clientId.trim(),
+      client_id: clientId,
       code,
       code_verifier: codeVerifier,
       redirect_uri: targetRedirectUri,
@@ -407,13 +409,13 @@ export class DerivProvider implements ITradingOSProvider {
       accountEnvironment: this.currentAccount?.accountEnvironment || (this.connectionStatus === 'CONNECTED' ? 'DEMO' : undefined),
       lastChecked: this.lastChecked,
       config: {
-        appId: this.appId,
+        appId: this.getAppId(),
         hasToken: !!this.apiToken,
         tokenMasked: maskedToken,
         accountEnvironment: 'DEMO',
         readOnlyEnforced: true,
-        hasClientId: !!this.clientId && this.clientId.trim().length > 0,
-        clientIdMasked: this.clientId ? `${this.clientId.substring(0, 3)}***` : undefined,
+        hasClientId: !!this.getClientId(),
+        clientIdMasked: this.getClientId() ? `${this.getClientId().substring(0, 3)}***` : undefined,
         redirectUri: this.getEffectiveRedirectUri(),
       },
     };
@@ -452,14 +454,15 @@ export class DerivProvider implements ITradingOSProvider {
     }
 
     // Step 2: OAuth 2.0 PKCE Client ID & WebSocket App ID Configuration
-    const hasClientId = !!this.clientId && this.clientId.trim().length > 0;
+    const currentClientId = this.getClientId();
+    const hasClientId = !!currentClientId;
     steps.push({
       id: 'deriv_app_id',
       name: 'OAuth 2.0 Client ID & WebSocket App ID Registration',
       status: hasClientId ? 'PASS' : 'WARNING',
       message: hasClientId
-        ? `OAuth 2.0 Client ID active (${this.clientId.substring(0, 3)}***) with S256 PKCE. WebSocket App ID: ${this.appId}`
-        : `DERIV_CLIENT_ID is not configured in environment. WebSocket App ID (${this.appId}) available for market data. Set DERIV_CLIENT_ID in Settings for OAuth login.`,
+        ? `OAuth 2.0 Client ID active (${currentClientId.substring(0, 3)}***) with S256 PKCE. WebSocket App ID: ${this.getAppId()}`
+        : `DERIV_CLIENT_ID is not configured in environment. WebSocket App ID (${this.getAppId()}) available for market data. Set DERIV_CLIENT_ID in Settings for OAuth login.`,
       timestamp: now,
     });
 

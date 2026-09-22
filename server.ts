@@ -1,6 +1,6 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { z } from 'zod';
 import {
@@ -15,9 +15,6 @@ import {
 import { Strategy, GenericStrategyRule, TradeDecision, JournalEntry } from './src/types';
 import { evaluateStrategyRules, DEFAULT_EVALUATION_STATE } from './src/lib/ruleEvaluationEngine';
 import { providerManager } from './server/connectivity/ProviderManager';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = 3000;
