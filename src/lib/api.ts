@@ -26,6 +26,15 @@ import {
   INITIAL_ANALYTICS,
 } from '../data/initialData';
 import { evaluateStrategyRules } from './ruleEvaluationEngine';
+import {
+  HistoricalEvaluationReport,
+  HistoricalEvaluator,
+  DEFAULT_SYNTHETIC_FIB_CONFIG,
+  SyntheticFixtures,
+} from './engine';
+import { RealBacktestReport, SyntheticFibConfig } from './engine/types';
+import { RiskGateParameters } from './engine/riskGate';
+import { derivBrowserClient, normalizeDerivSymbol } from './derivClient';
 
 // Local Storage Fallback Cache Keys
 const STORAGE_KEYS = {
@@ -315,6 +324,187 @@ export const api = {
     const currentStrat = strats.find((s) => s.id === strategyId) || INITIAL_STRATEGIES[0];
     const rules = await this.getRules(strategyId);
     return evaluateStrategyRules(currentStrat.id, currentStrat.name, currentStrat.market, rules);
+  },
+
+  async simulateStrategy(
+    strategyId: string,
+    scenario: 'BULLISH' | 'BEARISH' | 'DYNAMIC' | 'INVALIDATION' = 'BULLISH'
+  ): Promise<HistoricalEvaluationReport> {
+    try {
+      const res = await fetch(`/api/strategies/${strategyId}/simulate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scenario }),
+      });
+      if (res.ok) return await res.json();
+    } catch {}
+
+    // Fallback: direct local execution
+    let fixture;
+    if (scenario === 'BEARISH') {
+      fixture = SyntheticFixtures.createBearishCompleteFixture();
+    } else if (scenario === 'DYNAMIC') {
+      fixture = SyntheticFixtures.createDynamicFibExtensionFixture();
+      return HistoricalEvaluator.evaluate(
+        DEFAULT_SYNTHETIC_FIB_CONFIG,
+        fixture.h4Candles,
+        []
+      );
+    } else if (scenario === 'INVALIDATION') {
+      fixture = SyntheticFixtures.createM15ChochInvalidationFixture();
+    } else {
+      fixture = SyntheticFixtures.createBullishCompleteFixture();
+    }
+
+    return HistoricalEvaluator.evaluate(
+      DEFAULT_SYNTHETIC_FIB_CONFIG,
+      fixture.h4Candles,
+      fixture.m15Candles
+    );
+  },
+
+  async runRealBacktest(
+    strategyId: string,
+    params: {
+      symbol: string;
+      startDate: string;
+      endDate: string;
+      riskParams?: Partial<RiskGateParameters>;
+      configOverrides?: Partial<SyntheticFibConfig>;
+      rawH4Candles?: any[];
+      rawM15Candles?: any[];
+      dataSource?: 'SERVER' | 'BROWSER';
+    },
+    onProgress?: (statusMessage: string) => void
+  ): Promise<RealBacktestReport> {
+    try {
+      // If client already provided browser-fetched candles, post directly to server for validation & evaluation
+      if (params.rawH4Candles && params.rawM15Candles) {
+        const res = await fetch(`/api/strategies/${strategyId}/backtest`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(params),
+        });
+
+        if (res.ok) {
+          return await res.json();
+        }
+
+        const err = await res.json().catch(() => ({ message: `HTTP error ${res.status}` }));
+        throw new Error(err.message || err.error || 'Real historical backtest validation failed.');
+      }
+
+      // Step 1: Attempt standard server-side historical data retrieval
+      const res = await fetch(`/api/strategies/${strategyId}/backtest`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(params),
+      });
+
+      if (res.ok) {
+        return await res.json();
+      }
+
+      const err = await res.json().catch(() => ({ message: `HTTP error ${res.status}` }));
+
+      // Step 2: Check if server failed due to network / WebSocket / hosting container egress restriction
+      const isConnectionIssue =
+        res.status === 502 ||
+        res.status === 504 ||
+        err.category === 'CONNECTION' ||
+        err.error === 'DERIV_PARTIAL_DATA_TRANSPORT_ERROR' ||
+        err.message?.includes('DERIV_WS_') ||
+        err.message?.includes('WebSocket') ||
+        err.message?.includes('Connection') ||
+        err.message?.includes('ECONNREFUSED') ||
+        err.message?.includes('ETIMEDOUT');
+
+      if (isConnectionIssue) {
+        onProgress?.(
+          'Server historical transport unavailable — retrieving public Deriv candles from browser...'
+        );
+
+        const normSymbol = normalizeDerivSymbol(params.symbol);
+        const startEpoch = Math.floor(new Date(params.startDate).getTime() / 1000);
+        const endEpoch = Math.floor(new Date(params.endDate).getTime() / 1000);
+
+        try {
+          onProgress?.(
+            `Connecting to Deriv WebSocket from browser for ${normSymbol}...`
+          );
+
+          // Fetch H4 candles (14400s)
+          onProgress?.(`Fetching H4 candles for ${normSymbol} via browser...`);
+          const browserH4 = await derivBrowserClient.fetchHistoricalCandles(
+            normSymbol,
+            14400,
+            startEpoch,
+            endEpoch
+          );
+
+          // Fetch M15 candles (900s) with progress callback
+          onProgress?.(`Fetching M15 candles for ${normSymbol} via browser...`);
+          const browserM15 = await derivBrowserClient.fetchHistoricalCandles(
+            normSymbol,
+            900,
+            startEpoch,
+            endEpoch,
+            (count) => {
+              onProgress?.(
+                `Loading M15 candles via browser: ${count} loaded...`
+              );
+            }
+          );
+
+          if (!browserH4 || browserH4.length === 0 || !browserM15 || browserM15.length === 0) {
+            throw new Error(
+              `Deriv returned zero candles for ${normSymbol} between ${params.startDate} and ${params.endDate}.`
+            );
+          }
+
+          onProgress?.(
+            `Retrieved ${browserH4.length} H4 and ${browserM15.length} M15 candles. Submitting to server for validation & strategy evaluation...`
+          );
+
+          // Step 3: Forward untrusted browser candles to server for authoritative validation,
+          // deduplication, chronological ordering, incomplete candle filtering, and pure HistoricalEvaluator run.
+          return await this.runRealBacktest(
+            strategyId,
+            {
+              ...params,
+              rawH4Candles: browserH4,
+              rawM15Candles: browserM15,
+              dataSource: 'BROWSER',
+            },
+            onProgress
+          );
+        } catch (browserErr: any) {
+          // If browser WebSocket also failed, report the actual transport error clearly
+          throw new Error(
+            `Browser Deriv WebSocket query failed: ${browserErr.message || String(browserErr)}`
+          );
+        }
+      }
+
+      // If this was a regular validation error (e.g. invalid date range), throw it directly
+      throw new Error(err.message || err.error || 'Real historical backtest failed.');
+    } catch (err: any) {
+      throw err;
+    }
+  },
+
+  async getStrategyEngineState(strategyId: string): Promise<HistoricalEvaluationReport> {
+    try {
+      const res = await fetch(`/api/strategies/${strategyId}/engine-state`);
+      if (res.ok) return await res.json();
+    } catch {}
+
+    const fixture = SyntheticFixtures.createBullishCompleteFixture();
+    return HistoricalEvaluator.evaluate(
+      DEFAULT_SYNTHETIC_FIB_CONFIG,
+      fixture.h4Candles,
+      fixture.m15Candles
+    );
   },
 
   async getMarkets(): Promise<InstrumentQuote[]> {

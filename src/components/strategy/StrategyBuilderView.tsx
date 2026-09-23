@@ -38,6 +38,7 @@ import {
   validateCondition,
 } from '../../lib/strategyLanguage';
 import { api } from '../../lib/api';
+import { SyntheticEngineSimulatorView } from './SyntheticEngineSimulatorView';
 
 interface StrategyBuilderViewProps {
   strategies: Strategy[];
@@ -60,9 +61,9 @@ export const StrategyBuilderView: React.FC<StrategyBuilderViewProps> = ({
   const [rules, setRules] = useState<GenericStrategyRule[]>([]);
   const [loadingRules, setLoadingRules] = useState(false);
 
-  // Tabs for strategy details: 6 configuration sections + rules engine + evaluation report
+  // Tabs for strategy details: 6 configuration sections + rules engine + simulation engine + evaluation report
   const [activeTab, setActiveTab] = useState<
-    'RULES' | 'MARKET_CONTEXT' | 'FUNDAMENTALS' | 'TECHNICAL' | 'ENTRY' | 'EXIT' | 'RISK'
+    'RULES' | 'SIMULATION' | 'MARKET_CONTEXT' | 'FUNDAMENTALS' | 'TECHNICAL' | 'ENTRY' | 'EXIT' | 'RISK'
   >('RULES');
 
   // Filter rules by category
@@ -240,6 +241,7 @@ export const StrategyBuilderView: React.FC<StrategyBuilderViewProps> = ({
       <div className="flex items-center gap-1 overflow-x-auto pb-1 border-b border-[#1b252f] text-xs">
         {[
           { id: 'RULES', label: 'STRATEGY LANGUAGE RULES', count: rules.length, highlight: true },
+          { id: 'SIMULATION', label: 'SYNTHETIC STRUCTURE ENGINE', highlight: true },
           { id: 'MARKET_CONTEXT', label: '1. MARKET CONTEXT' },
           { id: 'FUNDAMENTALS', label: '2. FUNDAMENTALS' },
           { id: 'TECHNICAL', label: '3. TECHNICAL' },
@@ -421,8 +423,13 @@ export const StrategyBuilderView: React.FC<StrategyBuilderViewProps> = ({
         </div>
       )}
 
-      {/* Tab Content 2-7: Strategy Configuration Domain Areas */}
-      {activeStrategy && activeTab !== 'RULES' && (
+      {/* Tab Content 2: Synthetic Structure Engine & Walk-Forward Simulator */}
+      {activeTab === 'SIMULATION' && activeStrategy && (
+        <SyntheticEngineSimulatorView strategyId={activeStrategy.id} />
+      )}
+
+      {/* Tab Content 3-8: Strategy Configuration Domain Areas */}
+      {activeStrategy && activeTab !== 'RULES' && activeTab !== 'SIMULATION' && (
         <StrategyConfigPanel
           strategy={activeStrategy}
           activeTab={activeTab}

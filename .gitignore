@@ -1,8 +1,30 @@
+# Dependencies
 node_modules/
-build/
+bun.lock
+
+# Build artifacts
 dist/
+build/
 coverage/
+
+# Environment files and credentials (strict secret protection)
+.env
+.env.*
+.env.local
+.env.development
+.env.test
+.env.production
+!.env.example
+*.pem
+*.key
+*.cert
+*.id_rsa
+id_rsa
+*.p8
+*.p12
+
+# System & runtime process tracking
+.dev.env.json
+.dev.pid
 .DS_Store
 *.log
-.env*
-!.env.example

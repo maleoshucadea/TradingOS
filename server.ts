@@ -14,6 +14,19 @@ import {
 } from './src/data/initialData';
 import { Strategy, GenericStrategyRule, TradeDecision, JournalEntry } from './src/types';
 import { evaluateStrategyRules, DEFAULT_EVALUATION_STATE } from './src/lib/ruleEvaluationEngine';
+import {
+  HistoricalEvaluator,
+  DEFAULT_SYNTHETIC_FIB_CONFIG,
+  SyntheticFixtures,
+} from './src/lib/engine';
+import {
+  RealBacktestReport,
+  SyntheticFibConfig,
+} from './src/lib/engine/types';
+import {
+  DerivHistoricalDataService,
+  DerivPartialDataTransportError,
+} from './server/market-data/DerivHistoricalDataService';
 import { providerManager } from './server/connectivity/ProviderManager';
 
 const app = express();
@@ -355,6 +368,302 @@ app.post('/api/strategies/:id/evaluate', (req: Request, res: Response) => {
     strategy.market,
     strategyRules,
     contextState
+  );
+
+  res.json(report);
+});
+
+// Strategy Engine Core Simulation & Walk-Forward API
+app.post('/api/strategies/:id/simulate', (req: Request, res: Response) => {
+  const strategy = strategies.find((s) => s.id === req.params.id);
+  if (!strategy) {
+    return res.status(404).json({ error: 'Strategy not found' });
+  }
+
+  const scenario = req.body.scenario || 'BULLISH';
+  let h4Candles = req.body.h4Candles;
+  let m15Candles = req.body.m15Candles;
+
+  if (!h4Candles || !m15Candles) {
+    if (scenario === 'BEARISH') {
+      const fixture = SyntheticFixtures.createBearishCompleteFixture();
+      h4Candles = fixture.h4Candles;
+      m15Candles = fixture.m15Candles;
+    } else if (scenario === 'DYNAMIC') {
+      const fixture = SyntheticFixtures.createDynamicFibExtensionFixture();
+      h4Candles = fixture.h4Candles;
+      m15Candles = [];
+    } else if (scenario === 'INVALIDATION') {
+      const fixture = SyntheticFixtures.createM15ChochInvalidationFixture();
+      h4Candles = fixture.h4Candles;
+      m15Candles = fixture.m15Candles;
+    } else {
+      const fixture = SyntheticFixtures.createBullishCompleteFixture();
+      h4Candles = fixture.h4Candles;
+      m15Candles = fixture.m15Candles;
+    }
+  }
+
+  const report = HistoricalEvaluator.evaluate(
+    DEFAULT_SYNTHETIC_FIB_CONFIG,
+    h4Candles,
+    m15Candles
+  );
+
+  res.json(report);
+});
+
+// REAL HISTORICAL BACKTEST API — Powered by Deriv Historical Market Data
+// Strictly READ-ONLY / No order execution capability
+app.post('/api/strategies/:id/backtest', async (req: Request, res: Response) => {
+  try {
+    const strategy = strategies.find((s) => s.id === req.params.id);
+    if (!strategy) {
+      return res.status(404).json({
+        error: 'STRATEGY_NOT_FOUND',
+        message: `Strategy '${req.params.id}' was not found in the TradingOS registry.`,
+      });
+    }
+
+    const { symbol, startDate, endDate, riskParams, configOverrides } = req.body;
+    if (!symbol || typeof symbol !== 'string') {
+      return res.status(400).json({
+        error: 'INVALID_REQUEST',
+        message: 'A valid trading symbol (e.g. BOOM1000, BOOM500, CRASH1000, CRASH500, R_25) is required.',
+      });
+    }
+
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        error: 'INVALID_REQUEST',
+        message: 'Both startDate and endDate (ISO date strings or epoch timestamps) are required.',
+      });
+    }
+
+    const startMs = new Date(startDate).getTime();
+    const endMs = new Date(endDate).getTime();
+
+    if (isNaN(startMs) || isNaN(endMs)) {
+      return res.status(400).json({
+        error: 'INVALID_DATE_FORMAT',
+        message: 'startDate and endDate must be valid dates (e.g. YYYY-MM-DD or ISO 8601 strings).',
+      });
+    }
+
+    if (startMs >= endMs) {
+      return res.status(400).json({
+        error: 'INVALID_DATE_RANGE',
+        message: `Start date (${new Date(startMs).toISOString()}) must precede end date (${new Date(endMs).toISOString()}).`,
+      });
+    }
+
+    const historicalService = DerivHistoricalDataService.getInstance();
+
+    const rawH4Candles = req.body.rawH4Candles;
+    const rawM15Candles = req.body.rawM15Candles;
+
+    let h4Result;
+    let m15Result;
+
+    if (rawH4Candles !== undefined || rawM15Candles !== undefined) {
+      // PART E: Defensive server validation of untrusted browser-supplied candles
+      if (!Array.isArray(rawH4Candles) || !Array.isArray(rawM15Candles)) {
+        return res.status(400).json({
+          error: 'INVALID_CANDLE_PAYLOAD',
+          category: 'VALIDATION',
+          message: 'Both rawH4Candles and rawM15Candles must be supplied as non-empty arrays.',
+        });
+      }
+
+      if (rawH4Candles.length > 50000 || rawM15Candles.length > 100000) {
+        return res.status(400).json({
+          error: 'DATASET_TOO_LARGE',
+          category: 'VALIDATION',
+          message: 'Supplied historical dataset exceeds maximum allowed server capacity.',
+        });
+      }
+
+      // Check structure of candle items (must have numeric epoch, open, high, low, close)
+      for (let i = 0; i < Math.min(rawH4Candles.length, 500); i++) {
+        const c = rawH4Candles[i];
+        if (!c || typeof c !== 'object' || typeof c.epoch !== 'number' || typeof c.close !== 'number') {
+          return res.status(400).json({
+            error: 'MALFORMED_CANDLE_DATA',
+            category: 'VALIDATION',
+            message: 'Malformed candle records in H4 payload. Each record must have numeric epoch, open, high, low, close.',
+          });
+        }
+      }
+
+      for (let i = 0; i < Math.min(rawM15Candles.length, 500); i++) {
+        const c = rawM15Candles[i];
+        if (!c || typeof c !== 'object' || typeof c.epoch !== 'number' || typeof c.close !== 'number') {
+          return res.status(400).json({
+            error: 'MALFORMED_CANDLE_DATA',
+            category: 'VALIDATION',
+            message: 'Malformed candle records in M15 payload. Each record must have numeric epoch, open, high, low, close.',
+          });
+        }
+      }
+
+      // Process externally supplied raw Deriv candles through the exact same validation pipeline
+      h4Result = historicalService.processSuppliedRawCandles(
+        rawH4Candles,
+        symbol,
+        'H4',
+        startMs,
+        endMs
+      );
+      m15Result = historicalService.processSuppliedRawCandles(
+        rawM15Candles,
+        symbol,
+        'M15',
+        startMs,
+        endMs
+      );
+    } else {
+      // Concurrently retrieve real H4 and M15 candles from Deriv WebSocket
+      [h4Result, m15Result] = await Promise.all([
+        historicalService.getHistoricalCandles({
+          symbol,
+          timeframe: 'H4',
+          startTime: startMs,
+          endTime: endMs,
+        }),
+        historicalService.getHistoricalCandles({
+          symbol,
+          timeframe: 'M15',
+          startTime: startMs,
+          endTime: endMs,
+        }),
+      ]);
+    }
+
+    // Verify minimum structural candle counts
+    if (h4Result.candles.length < 5) {
+      return res.status(422).json({
+        error: 'INSUFFICIENT_HISTORICAL_DATA',
+        message: `Deriv returned only ${h4Result.candles.length} H4 candle(s) for '${symbol}'. At least 5 H4 candles are required to detect market structure. Please expand your historical date range.`,
+        h4DataQuality: h4Result.quality,
+        m15DataQuality: m15Result.quality,
+      });
+    }
+
+    if (m15Result.candles.length < 15) {
+      return res.status(422).json({
+        error: 'INSUFFICIENT_HISTORICAL_DATA',
+        message: `Deriv returned only ${m15Result.candles.length} M15 candle(s) for '${symbol}'. At least 15 M15 candles are required to detect execution structure. Please expand your historical date range.`,
+        h4DataQuality: h4Result.quality,
+        m15DataQuality: m15Result.quality,
+      });
+    }
+
+    // Merge configuration overrides if provided
+    const config: SyntheticFibConfig = {
+      ...DEFAULT_SYNTHETIC_FIB_CONFIG,
+      ...configOverrides,
+      h4: {
+        ...DEFAULT_SYNTHETIC_FIB_CONFIG.h4,
+        ...(configOverrides?.h4 || {}),
+      },
+      m15: {
+        ...DEFAULT_SYNTHETIC_FIB_CONFIG.m15,
+        ...(configOverrides?.m15 || {}),
+      },
+      risk: {
+        ...DEFAULT_SYNTHETIC_FIB_CONFIG.risk,
+        ...(configOverrides?.risk || {}),
+      },
+    };
+
+    // Run existing walk-forward HistoricalEvaluator without lookahead bias
+    const evalReport = HistoricalEvaluator.evaluate(
+      config,
+      h4Result.candles,
+      m15Result.candles,
+      riskParams
+    );
+
+    // Compute detailed performance metrics
+    const totalTrades = evalReport.positionsClosed;
+    const wins = evalReport.winCount;
+    const losses = evalReport.lossCount;
+    const winRatePercent = totalTrades > 0 ? Number(((wins / totalTrades) * 100).toFixed(2)) : 0;
+    const netRMultiple = Number(evalReport.totalRMultiple.toFixed(2));
+    const avgRMultiple = totalTrades > 0 ? Number((netRMultiple / totalTrades).toFixed(2)) : 0;
+    const avgWinRMultiple = Number(evalReport.averageWinR.toFixed(2));
+    const avgLossRMultiple = Number(evalReport.averageLossR.toFixed(2));
+    const maxDrawdownRMultiple = Number(evalReport.maxDrawdownRMultiple.toFixed(2));
+
+    const realReport: RealBacktestReport = {
+      ...evalReport,
+      dataSource: Array.isArray(rawH4Candles) ? 'REAL_DERIV_BROWSER_WS' : 'REAL_DERIV_HISTORICAL',
+      symbol: h4Result.symbol,
+      startDate: new Date(startMs).toISOString(),
+      endDate: new Date(endMs).toISOString(),
+      h4DataQuality: h4Result.quality,
+      m15DataQuality: m15Result.quality,
+      metrics: {
+        totalTrades,
+        winningTrades: wins,
+        losingTrades: losses,
+        winRatePercent,
+        netRMultiple,
+        avgRMultiple,
+        avgWinRMultiple,
+        avgLossRMultiple,
+        maxDrawdownRMultiple,
+        profitFactor: evalReport.profitFactor > 0 ? Number(evalReport.profitFactor.toFixed(2)) : null,
+      },
+    };
+
+    res.json(realReport);
+  } catch (err: any) {
+    const isPartialTransportErr =
+      err instanceof DerivPartialDataTransportError ||
+      err.name === 'DerivPartialDataTransportError' ||
+      err.code === 'DERIV_PARTIAL_DATA_TRANSPORT_ERROR';
+
+    const isConnectionErr =
+      isPartialTransportErr ||
+      err.message?.includes('DERIV_WS_') ||
+      err.message?.includes('WebSocket') ||
+      err.message?.includes('Connection') ||
+      err.message?.includes('ECONNREFUSED') ||
+      err.message?.includes('ETIMEDOUT') ||
+      err.message?.includes('520');
+
+    const isEmptyDataErr = err.message?.startsWith('EMPTY_HISTORICAL_DATA');
+
+    const isClientErr =
+      err.message?.startsWith('INVALID_') ||
+      err.message?.startsWith('DATE_RANGE_') ||
+      err.message?.startsWith('UNSUPPORTED_') ||
+      err.message?.startsWith('INSUFFICIENT_');
+
+    const status = isClientErr ? 400 : isEmptyDataErr ? 404 : 502;
+    const category = isClientErr ? 'VALIDATION' : isConnectionErr ? 'CONNECTION' : 'DATA';
+
+    res.status(status).json({
+      error: isPartialTransportErr ? 'DERIV_PARTIAL_DATA_TRANSPORT_ERROR' : 'BACKTEST_FAILED',
+      category,
+      message: err.message || 'An error occurred during real historical backtesting.',
+      details: err.details || undefined,
+    });
+  }
+});
+
+app.get('/api/strategies/:id/engine-state', (req: Request, res: Response) => {
+  const strategy = strategies.find((s) => s.id === req.params.id);
+  if (!strategy) {
+    return res.status(404).json({ error: 'Strategy not found' });
+  }
+
+  const fixture = SyntheticFixtures.createBullishCompleteFixture();
+  const report = HistoricalEvaluator.evaluate(
+    DEFAULT_SYNTHETIC_FIB_CONFIG,
+    fixture.h4Candles,
+    fixture.m15Candles
   );
 
   res.json(report);

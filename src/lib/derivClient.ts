@@ -176,6 +176,77 @@ export class DerivBrowserClient {
     };
   }
 
+  /**
+   * Fetches historical OHLC candles directly through browser WebSocket connection
+   * with chunked pagination for long ranges (e.g. 60 days of M15) exceeding Deriv limits.
+   */
+  public async fetchHistoricalCandles(
+    rawSymbol: string,
+    granularity: number,
+    startEpoch: number,
+    endEpoch: number,
+    onProgress?: (fetched: number, stage: string) => void
+  ): Promise<any[]> {
+    const symbol = normalizeDerivSymbol(rawSymbol);
+    const chunkCapacity = 4000;
+    const chunkDurationSec = chunkCapacity * granularity;
+    const allCandles: any[] = [];
+    let currentStart = startEpoch;
+
+    while (currentStart < endEpoch) {
+      const currentEnd = Math.min(currentStart + chunkDurationSec, endEpoch);
+      const count = Math.min(
+        chunkCapacity,
+        Math.ceil((currentEnd - currentStart) / granularity) + 10
+      );
+
+      const payload = {
+        ticks_history: symbol,
+        style: 'candles',
+        granularity,
+        start: currentStart,
+        end: currentEnd,
+        count,
+        adjust_start_time: 1,
+      };
+
+      const response = await this.send<{ candles?: any[]; error?: { message: string } }>(payload);
+      if (response.error) {
+        throw new Error(`Deriv public market data error: ${response.error.message || 'Unknown error'}`);
+      }
+
+      const chunk = response.candles || [];
+      if (chunk.length > 0) {
+        for (const c of chunk) {
+          if (c.epoch >= startEpoch && c.epoch <= endEpoch) {
+            allCandles.push(c);
+          }
+        }
+      } else {
+        // No further candles returned in this segment
+        break;
+      }
+
+      if (onProgress) {
+        const tfLabel = granularity >= 14400 ? 'H4' : 'M15';
+        onProgress(allCandles.length, `${tfLabel} (fetched ${allCandles.length} candles)`);
+      }
+
+      currentStart = currentEnd;
+    }
+
+    // Deduplicate and sort ascending by epoch
+    const seenEpochs = new Set<number>();
+    const deduplicated: any[] = [];
+    for (const c of allCandles) {
+      if (!seenEpochs.has(c.epoch)) {
+        seenEpochs.add(c.epoch);
+        deduplicated.push(c);
+      }
+    }
+    return deduplicated.sort((a, b) => a.epoch - b.epoch);
+  }
+
   public disconnect(): void {
     if (this.ws) {
       try {
@@ -190,3 +261,43 @@ export class DerivBrowserClient {
 }
 
 export const derivBrowserClient = new DerivBrowserClient();
+
+export function normalizeDerivSymbol(raw: string): string {
+  const clean = raw.trim().toUpperCase();
+  const symbolMap: Record<string, string> = {
+    'BOOM 1000': 'BOOM1000',
+    'BOOM1000': 'BOOM1000',
+    'BOOM 500': 'BOOM500',
+    'BOOM500': 'BOOM500',
+    'BOOM 300': 'BOOM300',
+    'BOOM300': 'BOOM300',
+    'CRASH 1000': 'CRASH1000',
+    'CRASH1000': 'CRASH1000',
+    'CRASH 500': 'CRASH500',
+    'CRASH500': 'CRASH500',
+    'CRASH 300': 'CRASH300',
+    'CRASH300': 'CRASH300',
+    'VOLATILITY 75': 'R_75',
+    'V75': 'R_75',
+    'R_75': 'R_75',
+    'VOLATILITY 100': 'R_100',
+    'V100': 'R_100',
+    'R_100': 'R_100',
+    'VOLATILITY 50': 'R_50',
+    'V50': 'R_50',
+    'R_50': 'R_50',
+    'VOLATILITY 25': 'R_25',
+    'V25': 'R_25',
+    'R_25': 'R_25',
+    'VOLATILITY 10': 'R_10',
+    'V10': 'R_10',
+    'R_10': 'R_10',
+    'EUR/USD': 'frxEURUSD',
+    'EURUSD': 'frxEURUSD',
+    'GBP/USD': 'frxGBPUSD',
+    'GBPUSD': 'frxGBPUSD',
+    'USD/JPY': 'frxUSDJPY',
+    'USDJPY': 'frxUSDJPY',
+  };
+  return symbolMap[clean] || clean.replace(/\s+/g, '');
+}
