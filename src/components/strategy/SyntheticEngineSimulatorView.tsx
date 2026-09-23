@@ -98,9 +98,15 @@ export const SyntheticEngineSimulatorView: React.FC<SyntheticEngineSimulatorView
       setFallbackProgress(null);
     } catch (err: any) {
       console.error('Real backtest error:', err);
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+          ? err
+          : err?.message || (err?.type ? `WebSocket ${err.type} event` : JSON.stringify(err));
       setRealError({
         category: err.category || 'DATA',
-        message: err.message || 'Backtest failed. Verify symbol and date range.',
+        message: msg || 'Backtest failed. Verify symbol and date range.',
       });
       setFallbackProgress(null);
     } finally {

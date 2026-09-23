@@ -424,6 +424,14 @@ export const api = {
           'Server historical transport unavailable — retrieving public Deriv candles from browser...'
         );
 
+        // Check if custom App ID was configured by user
+        try {
+          const storedAppId = localStorage.getItem('trading_deriv_app_id');
+          if (storedAppId) {
+            derivBrowserClient.setAppId(storedAppId);
+          }
+        } catch {}
+
         const normSymbol = normalizeDerivSymbol(params.symbol);
         const startEpoch = Math.floor(new Date(params.startDate).getTime() / 1000);
         const endEpoch = Math.floor(new Date(params.endDate).getTime() / 1000);
@@ -439,7 +447,10 @@ export const api = {
             normSymbol,
             14400,
             startEpoch,
-            endEpoch
+            endEpoch,
+            (count, stage) => {
+              onProgress?.(`Loading H4 candles via browser: ${stage}`);
+            }
           );
 
           // Fetch M15 candles (900s) with progress callback
@@ -449,9 +460,9 @@ export const api = {
             900,
             startEpoch,
             endEpoch,
-            (count) => {
+            (count, stage) => {
               onProgress?.(
-                `Loading M15 candles via browser: ${count} loaded...`
+                `Loading M15 candles via browser: ${stage}`
               );
             }
           );
@@ -480,8 +491,14 @@ export const api = {
           );
         } catch (browserErr: any) {
           // If browser WebSocket also failed, report the actual transport error clearly
+          const detail =
+            browserErr instanceof Error
+              ? browserErr.message
+              : typeof browserErr === 'string'
+              ? browserErr
+              : browserErr?.message || (browserErr?.type ? `WebSocket ${browserErr.type} event` : JSON.stringify(browserErr));
           throw new Error(
-            `Browser Deriv WebSocket query failed: ${browserErr.message || String(browserErr)}`
+            `Browser Deriv WebSocket query failed: ${detail}`
           );
         }
       }

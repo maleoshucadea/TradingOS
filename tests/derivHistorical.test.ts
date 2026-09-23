@@ -19,6 +19,7 @@ import {
   DEFAULT_SYNTHETIC_FIB_CONFIG,
   SyntheticFixtures,
 } from '../src/lib/engine';
+import { normalizeDerivSymbol, DerivBrowserClient } from '../src/lib/derivClient';
 
 // Mock Transport Implementation for unit and integration testing
 class MockDerivTransport implements IDerivTransport {
@@ -671,5 +672,28 @@ describe('TradingOS: Real Historical Market Data & Backtesting Layer', () => {
     assert.strictEqual(evalReport.positionsClosed >= 1, true);
     assert.strictEqual(evalReport.winCount >= 1, true);
     assert.strictEqual(evalReport.totalRMultiple > 0, true);
+  });
+
+  // 21. DerivBrowserClient symbol normalization & custom App ID
+  it('21. DerivBrowserClient properly normalizes Boom/Crash/Volatility symbols and sets custom App ID', () => {
+    assert.strictEqual(normalizeDerivSymbol('Boom 1000'), 'BOOM1000');
+    assert.strictEqual(normalizeDerivSymbol('BOOM 500'), 'BOOM500');
+    assert.strictEqual(normalizeDerivSymbol('Crash 1000'), 'CRASH1000');
+    assert.strictEqual(normalizeDerivSymbol('Volatility 75'), 'R_75');
+    assert.strictEqual(normalizeDerivSymbol('V100'), 'R_100');
+    assert.strictEqual(normalizeDerivSymbol('EUR/USD'), 'frxEURUSD');
+
+    const client = new DerivBrowserClient('1089');
+    assert.strictEqual(client.getAppId(), '1089');
+    client.setAppId('36300');
+    assert.strictEqual(client.getAppId(), '36300');
+  });
+
+  // 22. DerivBrowserClient connection lifecycle handles deduplication and status
+  it('22. DerivBrowserClient initial state is DISCONNECTED and transitions safely', () => {
+    const client = new DerivBrowserClient('1089');
+    assert.strictEqual(client.getStatus(), 'DISCONNECTED');
+    client.disconnect();
+    assert.strictEqual(client.getStatus(), 'DISCONNECTED');
   });
 });
