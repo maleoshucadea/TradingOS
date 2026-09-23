@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { HistoricalEvaluationReport, RealBacktestReport } from '../../lib/engine/types';
 import { api } from '../../lib/api';
+import { derivBrowserClient } from '../../lib/derivClient';
 
 interface SyntheticEngineSimulatorViewProps {
   strategyId: string;
@@ -59,6 +60,42 @@ export const SyntheticEngineSimulatorView: React.FC<SyntheticEngineSimulatorView
   const [fallbackProgress, setFallbackProgress] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(false);
+
+  // Focused Browser Probe State
+  const [probeState, setProbeState] = useState<{
+    status: 'IDLE' | 'PROBING' | 'SUCCESS' | 'ERROR';
+    symbol?: string;
+    candle?: any;
+    endpoint?: string;
+    endpointsLog?: string[];
+    message?: string;
+    timestamp?: string;
+  }>({ status: 'IDLE' });
+
+  const runBrowserProbe = async () => {
+    const sym = customSymbol.trim() ? customSymbol.trim().toUpperCase() : realSymbol;
+    setProbeState({ status: 'PROBING', symbol: sym });
+    try {
+      const candle = await derivBrowserClient.probeTicksHistory(sym);
+      setProbeState({
+        status: 'SUCCESS',
+        symbol: sym,
+        candle,
+        endpoint: derivBrowserClient.getActiveEndpoint() || 'Connected Endpoint',
+        endpointsLog: derivBrowserClient.getConnectionLog(),
+        timestamp: new Date().toLocaleTimeString(),
+      });
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setProbeState({
+        status: 'ERROR',
+        symbol: sym,
+        message: msg,
+        endpointsLog: derivBrowserClient.getConnectionLog(),
+        timestamp: new Date().toLocaleTimeString(),
+      });
+    }
+  };
 
   // Run Scenario Simulation
   const runSimulation = async (scenario: 'BULLISH' | 'BEARISH' | 'DYNAMIC' | 'INVALIDATION') => {
@@ -316,7 +353,7 @@ export const SyntheticEngineSimulatorView: React.FC<SyntheticEngineSimulatorView
                   Quick Range & Risk %
                 </label>
                 <div className="flex items-center gap-1 mb-1.5">
-                  {[7, 14, 30, 60].map((d) => (
+                  {[1, 7, 14, 30, 60].map((d) => (
                     <button
                       key={d}
                       onClick={() => setQuickRange(d)}
@@ -339,16 +376,92 @@ export const SyntheticEngineSimulatorView: React.FC<SyntheticEngineSimulatorView
                     <span className="text-[10px] text-gray-400">%</span>
                   </div>
                 </div>
-                <button
-                  onClick={runRealBacktest}
-                  disabled={loading}
-                  className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded bg-[#c6f135] text-black hover:bg-[#b0d92e] transition-all font-mono"
-                >
-                  <Play className={`w-3.5 h-3.5 fill-black ${loading ? 'animate-spin' : ''}`} />
-                  <span>{loading ? 'DOWNLOADING & BACKTESTING...' : 'RUN REAL BACKTEST'}</span>
-                </button>
+                <div className="grid grid-cols-2 gap-2 mt-1">
+                  <button
+                    onClick={runBrowserProbe}
+                    disabled={probeState.status === 'PROBING' || loading}
+                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded bg-[#1f2937] text-gray-200 hover:text-white hover:bg-[#374151] border border-gray-700 transition-all font-mono"
+                    title="Test 1-candle live WebSocket probe directly from browser"
+                  >
+                    <Zap className={`w-3 h-3 text-yellow-400 ${probeState.status === 'PROBING' ? 'animate-spin' : ''}`} />
+                    <span>{probeState.status === 'PROBING' ? 'PROBING...' : 'PROBE (1-CANDLE)'}</span>
+                  </button>
+                  <button
+                    onClick={runRealBacktest}
+                    disabled={loading || probeState.status === 'PROBING'}
+                    className="flex items-center justify-center gap-1 px-2.5 py-1.5 text-[11px] font-bold rounded bg-[#c6f135] text-black hover:bg-[#b0d92e] transition-all font-mono"
+                  >
+                    <Play className={`w-3 h-3 fill-black ${loading ? 'animate-spin' : ''}`} />
+                    <span>{loading ? 'RUNNING...' : 'RUN BACKTEST'}</span>
+                  </button>
+                </div>
               </div>
             </div>
+
+            {/* Probe Diagnostic Result Panel */}
+            {probeState.status === 'SUCCESS' && (
+              <div className="p-3 rounded bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="font-bold flex items-center gap-1.5 text-emerald-400">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Live 1-Candle Probe Succeeded for {probeState.symbol}</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400 font-mono">{probeState.timestamp}</span>
+                </div>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 bg-[#0d141b] p-2 rounded border border-[#1e293b] font-mono text-[11px]">
+                  <div>
+                    <span className="text-gray-400 block text-[9px]">TIME (UTC)</span>
+                    <span className="text-white">{new Date((probeState.candle?.epoch || 0) * 1000).toISOString().slice(11, 19)}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 block text-[9px]">OPEN</span>
+                    <span className="text-gray-200">{probeState.candle?.open}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 block text-[9px]">HIGH</span>
+                    <span className="text-emerald-400">{probeState.candle?.high}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 block text-[9px]">LOW</span>
+                    <span className="text-rose-400">{probeState.candle?.low}</span>
+                  </div>
+                  <div>
+                    <span className="text-gray-400 block text-[9px]">CLOSE</span>
+                    <span className="text-emerald-300 font-bold">{probeState.candle?.close}</span>
+                  </div>
+                </div>
+                <div className="mt-2 text-[10px] text-gray-400 font-mono truncate">
+                  <span className="text-gray-500">Connected Endpoint: </span>
+                  <span className="text-emerald-300">{probeState.endpoint}</span>
+                </div>
+                {probeState.endpointsLog && probeState.endpointsLog.length > 1 && (
+                  <div className="mt-1 text-[10px] text-gray-500 font-mono">
+                    Failover history: {probeState.endpointsLog.join(' → ')}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {probeState.status === 'ERROR' && (
+              <div className="p-3 rounded bg-rose-500/10 border border-rose-500/40 text-rose-300 text-xs">
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="font-bold flex items-center gap-1.5 text-rose-400">
+                    <AlertTriangle className="w-4 h-4 text-rose-400" />
+                    <span>Live 1-Candle Probe Failed for {probeState.symbol}</span>
+                  </div>
+                  <span className="text-[10px] text-gray-400 font-mono">{probeState.timestamp}</span>
+                </div>
+                <div className="text-[11px] text-rose-200 font-mono mt-0.5">{probeState.message}</div>
+                {probeState.endpointsLog && probeState.endpointsLog.length > 0 && (
+                  <div className="mt-2 p-2 rounded bg-black/40 border border-rose-900/40 text-[10px] font-mono text-gray-300 space-y-0.5">
+                    <div className="font-bold text-gray-400 uppercase text-[9px]">Endpoints Attempted:</div>
+                    {probeState.endpointsLog.map((log, idx) => (
+                      <div key={idx} className="truncate">• {log}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Real-time Fallback Progress Banner */}
             {loading && fallbackProgress && (

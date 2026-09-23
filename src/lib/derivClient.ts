@@ -24,9 +24,19 @@ export class DerivBrowserClient {
   private pendingRequests: Map<string, { resolve: (data: any) => void; reject: (err: any) => void }> = new Map();
   private reqId = 1;
   private connectPromise: Promise<void> | null = null;
+  private activeEndpoint: string | null = null;
+  private connectionLog: string[] = [];
 
   constructor(appId: string = '1089') {
     this.appId = appId;
+  }
+
+  public getActiveEndpoint(): string | null {
+    return this.activeEndpoint;
+  }
+
+  public getConnectionLog(): string[] {
+    return [...this.connectionLog];
   }
 
   public setAppId(appId: string): void {
@@ -79,21 +89,28 @@ export class DerivBrowserClient {
     ];
 
     this.connectPromise = (async () => {
+      this.connectionLog = [];
       let lastFailureDetail = 'Unknown connection error';
 
       for (let i = 0; i < candidateUrls.length; i++) {
         const wsUrl = candidateUrls[i];
+        this.connectionLog.push(`[${i + 1}/${candidateUrls.length}] Attempting ${wsUrl}`);
         try {
           await this.attemptSingleConnection(wsUrl);
+          this.activeEndpoint = wsUrl;
+          this.connectionLog.push(`Successfully connected to ${wsUrl}`);
           this.notifyStatus('CONNECTED');
           this.connectPromise = null;
           return;
         } catch (err: any) {
-          lastFailureDetail = err?.message || String(err);
+          const detail = err?.message || String(err);
+          this.connectionLog.push(`Failed ${wsUrl}: ${detail}`);
+          lastFailureDetail = detail;
           // Try next endpoint in candidate list
         }
       }
 
+      this.activeEndpoint = null;
       this.notifyStatus('ERROR');
       this.connectPromise = null;
       throw new Error(
@@ -279,8 +296,9 @@ export class DerivBrowserClient {
    * Pre-flight probe: Requests the smallest possible ticks_history (1 candle)
    * to immediately verify WebSocket connectivity, App ID, symbol validity, and API acceptance
    * before initiating large multi-chunk historical downloads.
+   * Returns the verified candle record with epoch and OHLC prices.
    */
-  public async probeTicksHistory(rawSymbol: string): Promise<boolean> {
+  public async probeTicksHistory(rawSymbol: string): Promise<any> {
     const symbol = normalizeDerivSymbol(rawSymbol);
     const payload = {
       ticks_history: symbol,
@@ -305,7 +323,7 @@ export class DerivBrowserClient {
       throw new Error(`Deriv returned 0 candles for probe on symbol '${symbol}'. Verify market is active.`);
     }
 
-    return true;
+    return res.candles[0];
   }
 
   public subscribeTick(symbol: string, onTick: (tick: DerivLiveTick) => void): () => void {
